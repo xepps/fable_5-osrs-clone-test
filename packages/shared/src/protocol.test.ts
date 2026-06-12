@@ -1,18 +1,126 @@
 import { describe, expect, it } from 'vitest'
-import { clientMessageSchema, serverMessageSchema } from './protocol'
+import { clientMessageSchema, persistentPlayerSchema, serverMessageSchema } from './protocol'
 import { MAP_SIZE } from './world'
 
+const validPersistentPlayer = () => ({
+  version: 1,
+  name: 'Zezima',
+  position: { x: 96, z: 96 },
+  hp: 10,
+  skills: {
+    attack: 0,
+    strength: 0,
+    defence: 0,
+    hitpoints: 1154,
+    woodcutting: 0,
+    fishing: 0,
+    cooking: 0,
+  },
+  inventory: Array.from({ length: 28 }, () => null),
+  equipment: { head: null, weapon: { itemId: 'bronze_sword', quantity: 1 } },
+  bank: [{ itemId: 'coins', quantity: 1000 }],
+  runEnergy: 80,
+})
+
+describe('persistent player validation', () => {
+  it('accepts a complete version 1 payload', () => {
+    expect(persistentPlayerSchema.safeParse(validPersistentPlayer()).success).toBe(true)
+  })
+
+  it('rejects unknown save versions', () => {
+    expect(
+      persistentPlayerSchema.safeParse({ ...validPersistentPlayer(), version: 2 }).success,
+    ).toBe(false)
+  })
+
+  it('rejects an inventory that is not exactly 28 slots', () => {
+    expect(
+      persistentPlayerSchema.safeParse({
+        ...validPersistentPlayer(),
+        inventory: Array.from({ length: 27 }, () => null),
+      }).success,
+    ).toBe(false)
+  })
+
+  it('rejects unknown item ids in the bank', () => {
+    expect(
+      persistentPlayerSchema.safeParse({
+        ...validPersistentPlayer(),
+        bank: [{ itemId: 'party_hat', quantity: 1 }],
+      }).success,
+    ).toBe(false)
+  })
+
+  it('rejects run energy and positions outside their bounds', () => {
+    expect(
+      persistentPlayerSchema.safeParse({ ...validPersistentPlayer(), runEnergy: 101 }).success,
+    ).toBe(false)
+    expect(
+      persistentPlayerSchema.safeParse({
+        ...validPersistentPlayer(),
+        position: { x: MAP_SIZE, z: 0 },
+      }).success,
+    ).toBe(false)
+  })
+})
+
+const CHARACTER_ID = '0f5b2c4d-9a3e-4f6b-8c1d-2e3f4a5b6c7d'
+
 describe('client message validation', () => {
-  it('accepts a hello with a trimmed display name', () => {
-    const parsed = clientMessageSchema.parse({ type: 'hello', name: '  Zezima  ' })
-    expect(parsed).toEqual({ type: 'hello', name: 'Zezima' })
+  it('accepts a hello with a trimmed display name, character id and optional save', () => {
+    const parsed = clientMessageSchema.parse({
+      type: 'hello',
+      name: '  Zezima  ',
+      characterId: CHARACTER_ID,
+      save: null,
+    })
+    expect(parsed).toEqual({
+      type: 'hello',
+      name: 'Zezima',
+      characterId: CHARACTER_ID,
+      save: null,
+    })
+    expect(
+      clientMessageSchema.safeParse({
+        type: 'hello',
+        name: 'Zezima',
+        characterId: CHARACTER_ID,
+        save: 'b64blob==',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('rejects a hello without a uuid character id', () => {
+    expect(
+      clientMessageSchema.safeParse({ type: 'hello', name: 'Zezima', save: null }).success,
+    ).toBe(false)
+    expect(
+      clientMessageSchema.safeParse({
+        type: 'hello',
+        name: 'Zezima',
+        characterId: 'not-a-uuid',
+        save: null,
+      }).success,
+    ).toBe(false)
   })
 
   it('rejects empty or oversized display names', () => {
-    expect(clientMessageSchema.safeParse({ type: 'hello', name: '   ' }).success).toBe(false)
-    expect(clientMessageSchema.safeParse({ type: 'hello', name: 'x'.repeat(13) }).success).toBe(
-      false,
-    )
+    expect(
+      clientMessageSchema.safeParse({
+        type: 'hello',
+        name: '   ',
+        characterId: CHARACTER_ID,
+        save: null,
+      }).success,
+    ).toBe(false)
+    expect(
+      clientMessageSchema.safeParse({
+        type: 'hello',
+        name: 'x'.repeat(13),
+        characterId: CHARACTER_ID,
+        save: null,
+      }).success,
+    ).toBe(false)
   })
 
   it('accepts a move intent within the map and rejects one outside it', () => {
@@ -101,6 +209,45 @@ describe('server message validation', () => {
     ).toBe(true)
   })
 
+  it('accepts a login rejection', () => {
+    expect(
+      serverMessageSchema.safeParse({ type: 'loginRejected', reason: 'Bad save.' }).success,
+    ).toBe(true)
+  })
+
+  it('requires snapshots to carry the encrypted save blob', () => {
+    const snapshot = {
+      type: 'snapshot',
+      tick: 1,
+      players: [],
+      npcs: [],
+      groundItems: [],
+      depletedObjects: [],
+      events: [],
+      you: {
+        hp: 10,
+        inventory: Array.from({ length: 28 }, () => null),
+        equipment: { head: null, weapon: null },
+        skills: {
+          attack: 0,
+          strength: 0,
+          defence: 0,
+          hitpoints: 1154,
+          woodcutting: 0,
+          fishing: 0,
+          cooking: 0,
+        },
+        runEnergy: 100,
+        runEnabled: false,
+        openInterface: null,
+        bank: null,
+        shop: null,
+      },
+    }
+    expect(serverMessageSchema.safeParse(snapshot).success).toBe(false)
+    expect(serverMessageSchema.safeParse({ ...snapshot, save: 'blob==' }).success).toBe(true)
+  })
+
   it('accepts a snapshot with players, npcs, items and private state', () => {
     const snapshot = {
       type: 'snapshot',
@@ -152,6 +299,7 @@ describe('server message validation', () => {
         bank: [{ itemId: 'coins', quantity: 1000 }],
         shop: null,
       },
+      save: 'blob==',
     }
     const result = serverMessageSchema.safeParse(snapshot)
     expect(result.success).toBe(true)
@@ -196,6 +344,7 @@ describe('server message validation', () => {
         bank: null,
         shop: null,
       },
+      save: 'blob==',
     }
     expect(serverMessageSchema.safeParse({ ...base, players: [player] }).success).toBe(true)
     expect(
@@ -232,6 +381,7 @@ describe('server message validation', () => {
       depletedObjects: [],
       events: [],
       you,
+      save: 'blob==',
     })
     expect(result.success).toBe(false)
   })
@@ -264,6 +414,7 @@ describe('server message validation', () => {
         bank: null,
         shop: null,
       },
+      save: 'blob==',
     })
     expect(result.success).toBe(false)
   })

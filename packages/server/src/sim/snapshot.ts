@@ -8,6 +8,7 @@ export const snapshotFor = (
   world: SimWorld,
   playerId: string,
   events: readonly AddressedEvent[],
+  save: string,
 ): SnapshotMessage | null => {
   const you = world.players[playerId]
   if (!you) return null
@@ -17,6 +18,7 @@ export const snapshotFor = (
   return {
     type: 'snapshot',
     tick: world.tick,
+    save,
     players: Object.values(world.players)
       .filter((player) => player.id === playerId || inView(player.position))
       .map((player) => ({

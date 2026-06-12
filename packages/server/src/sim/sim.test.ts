@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { GAME_MAP, levelForXp, type GameEvent, type ItemId } from '@osrs/shared'
+import {
+  GAME_MAP,
+  levelForXp,
+  type GameEvent,
+  type ItemId,
+  type PersistentPlayer,
+} from '@osrs/shared'
 import { snapshotFor } from './snapshot'
 import { runTick, type AddressedEvent, type SimIntent, type SimRng } from './tick'
-import { createWorld, type SimWorld } from './world'
+import { createPlayer, createWorld, persistentStateOf, type SimWorld } from './world'
 
 const SPAWN = GAME_MAP.spawnPoint
 
@@ -65,6 +71,89 @@ const eventsFor = (events: readonly AddressedEvent[], playerId: string): GameEve
 const messagesFor = (events: readonly AddressedEvent[], playerId: string): string[] =>
   eventsFor(events, playerId).flatMap((event) => (event.kind === 'message' ? [event.text] : []))
 
+describe('restoring a saved character', () => {
+  const savedState = (): PersistentPlayer => ({
+    version: 1,
+    name: 'Bob',
+    position: { x: SPAWN.x + 10, z: SPAWN.z + 5 },
+    hp: 4,
+    skills: {
+      attack: 100,
+      strength: 80,
+      defence: 0,
+      hitpoints: 1300,
+      woodcutting: 50,
+      fishing: 25,
+      cooking: 30,
+    },
+    inventory: [
+      { itemId: 'bronze_axe', quantity: 1 },
+      { itemId: 'coins', quantity: 40 },
+      ...Array.from({ length: 26 }, () => null),
+    ],
+    equipment: { head: null, weapon: { itemId: 'bronze_sword', quantity: 1 } },
+    bank: [{ itemId: 'raw_shrimps', quantity: 12 }],
+    runEnergy: 55,
+  })
+
+  it('rejoins with the saved position, stats, items and bank', () => {
+    const game = harness()
+    game.step([{ kind: 'join', playerId: 'p1', name: 'Bob', restore: savedState() }])
+    const player = game.world.players['p1']!
+    expect(player.position).toEqual(savedState().position)
+    expect(player.hp).toBe(4)
+    expect(player.skills).toEqual(savedState().skills)
+    expect(player.inventory[0]).toEqual({ itemId: 'bronze_axe', quantity: 1 })
+    expect(player.equipment.weapon).toEqual({ itemId: 'bronze_sword', quantity: 1 })
+    expect(player.bank).toEqual([{ itemId: 'raw_shrimps', quantity: 12 }])
+    expect(player.runEnergy).toBe(savedState().runEnergy + 1)
+  })
+
+  it('starts restored characters with fresh transient state', () => {
+    const game = harness()
+    game.step([{ kind: 'join', playerId: 'p1', name: 'Bob', restore: savedState() }])
+    const player = game.world.players['p1']!
+    expect(player.path).toEqual([])
+    expect(player.action).toBeNull()
+    expect(player.openInterface).toBeNull()
+    expect(player.attackCooldown).toBe(0)
+  })
+
+  it('clamps a zero-hp save to at least one hitpoint', () => {
+    const game = harness()
+    game.step([{ kind: 'join', playerId: 'p1', name: 'Bob', restore: { ...savedState(), hp: 0 } }])
+    expect(game.world.players['p1']!.hp).toBe(1)
+  })
+
+  it('falls back to the spawn point when the saved position is not walkable', () => {
+    const waterTile = GAME_MAP.terrain.flatMap((row, z) =>
+      row.flatMap((terrain, x) => (terrain === 'water' ? [{ x, z }] : [])),
+    )[0]!
+    const game = harness()
+    game.step([
+      {
+        kind: 'join',
+        playerId: 'p1',
+        name: 'Bob',
+        restore: { ...savedState(), position: waterTile },
+      },
+    ])
+    expect(game.world.players['p1']!.position).toEqual(GAME_MAP.spawnPoint)
+  })
+
+  it('round-trips a live player through persistentStateOf and back', () => {
+    const game = harness()
+    game.step([join('p1', 'Bob')])
+    game.step([
+      msg('p1', { type: 'takeItem', x: swordSpawn.x, z: swordSpawn.z, itemId: 'bronze_sword' }),
+    ])
+    game.stepN(3)
+    const saved = persistentStateOf(game.world.players['p1']!)
+    const clone = createPlayer('p2', saved.name, saved)
+    expect(persistentStateOf(clone)).toEqual(saved)
+  })
+})
+
 describe('joining and leaving the world', () => {
   it('spawns a new player at the spawn point with 10 hp and an empty inventory', () => {
     const game = harness()
@@ -80,7 +169,7 @@ describe('joining and leaving the world', () => {
     game.step([join('p1', 'Bob')])
     game.step([{ kind: 'leave', playerId: 'p1' }])
     expect(game.world.players['p1']).toBeUndefined()
-    expect(snapshotFor(game.world, 'p1', [])).toBeNull()
+    expect(snapshotFor(game.world, 'p1', [], '')).toBeNull()
   })
 })
 
@@ -114,7 +203,7 @@ describe('running', () => {
 
   it('reports run energy and mode in the private snapshot', () => {
     const game = runner()
-    const snapshot = snapshotFor(game.world, 'p1', [])!
+    const snapshot = snapshotFor(game.world, 'p1', [], '')!
     expect(snapshot.you.runEnabled).toBe(true)
     expect(snapshot.you.runEnergy).toBe(100)
   })
@@ -410,14 +499,14 @@ describe('combat animations', () => {
     let sawNpcAttack = false
     for (let i = 0; i < 60 && !(sawPlayerAttack && sawNpcAttack); i += 1) {
       game.step()
-      const snapshot = snapshotFor(game.world, 'p1', [])!
+      const snapshot = snapshotFor(game.world, 'p1', [], '')!
       const me = snapshot.players.find((player) => player.id === 'p1')!
       const goblin = snapshot.npcs.find((npc) => npc.id === 'npc_goblin_0')
       sawNpcAttack = sawNpcAttack || goblin?.anim === 'attack'
       if (me.anim === 'attack' && !sawPlayerAttack) {
         sawPlayerAttack = true
         game.step()
-        const after = snapshotFor(game.world, 'p1', [])!
+        const after = snapshotFor(game.world, 'p1', [], '')!
         expect(after.players.find((player) => player.id === 'p1')!.anim).toBeUndefined()
       }
     }
@@ -577,7 +666,7 @@ describe('banking', () => {
     game.step([msg('p1', { type: 'openBank', objectId: booth.id })])
     game.stepN(25)
     expect(game.world.players['p1']!.openInterface).toBe('bank')
-    const snapshot = snapshotFor(game.world, 'p1', [])!
+    const snapshot = snapshotFor(game.world, 'p1', [], '')!
     expect(snapshot.you.openInterface).toBe('bank')
     expect(snapshot.you.bank).toEqual([])
   })
@@ -585,7 +674,7 @@ describe('banking', () => {
   it('hides bank contents from the snapshot while the bank is closed', () => {
     const game = harness()
     game.step([join('p1', 'Bob')])
-    const snapshot = snapshotFor(game.world, 'p1', [])!
+    const snapshot = snapshotFor(game.world, 'p1', [], '')!
     expect(snapshot.you.openInterface).toBeNull()
     expect(snapshot.you.bank).toBeNull()
   })
@@ -687,7 +776,7 @@ describe('the general store', () => {
   it('opens the shop after walking to the shopkeeper', () => {
     const game = shopper()
     expect(game.world.players['p1']!.openInterface).toBe('shop')
-    const snapshot = snapshotFor(game.world, 'p1', [])!
+    const snapshot = snapshotFor(game.world, 'p1', [], '')!
     expect(snapshot.you.openInterface).toBe('shop')
     expect(snapshot.you.shop).toContainEqual({ itemId: 'small_fishing_net', quantity: 5 })
   })
@@ -755,8 +844,8 @@ describe('snapshots', () => {
     ])
     game.stepN(3)
     game.step([msg('p1', { type: 'equipItem', slot: 0 })])
-    const forP1 = snapshotFor(game.world, 'p1', [])!
-    const forP2 = snapshotFor(game.world, 'p2', [])!
+    const forP1 = snapshotFor(game.world, 'p1', [], '')!
+    const forP2 = snapshotFor(game.world, 'p2', [], '')!
     expect(forP1.you.equipment.weapon).toEqual({ itemId: 'bronze_sword', quantity: 1 })
     expect(forP2.you.equipment.weapon).toBeNull()
     const bobSeenByAlice = forP2.players.find((player) => player.id === 'p1')
@@ -766,16 +855,16 @@ describe('snapshots', () => {
   it('omits entities beyond view distance but always includes yourself', () => {
     const game = harness()
     game.step([join('p1', 'Bob'), join('p2', 'Alice')])
-    const nearby = snapshotFor(game.world, 'p1', [])!
+    const nearby = snapshotFor(game.world, 'p1', [], '')!
     expect(nearby.npcs.some((npc) => npc.id === 'npc_goblin_0')).toBe(true)
     expect(nearby.npcs.some((npc) => npc.defId === 'cow')).toBe(false)
     expect(nearby.players.map((player) => player.id).sort()).toEqual(['p1', 'p2'])
     game.step([msg('p2', { type: 'setRun', enabled: true })])
     game.step([msg('p2', { type: 'moveTo', x: SPAWN.x, z: SPAWN.z + 44 })])
     game.stepN(23)
-    const afterRun = snapshotFor(game.world, 'p1', [])!
+    const afterRun = snapshotFor(game.world, 'p1', [], '')!
     expect(afterRun.players.map((player) => player.id)).toEqual(['p1'])
-    const forP2 = snapshotFor(game.world, 'p2', [])!
+    const forP2 = snapshotFor(game.world, 'p2', [], '')!
     expect(forP2.players.map((player) => player.id)).toEqual(['p2'])
   })
 
@@ -786,7 +875,7 @@ describe('snapshots', () => {
       { audience: 'p1', event: { kind: 'message', text: 'secret' } },
       { audience: 'all', event: { kind: 'chat', playerId: 'p2', name: 'Alice', text: 'hi' } },
     ]
-    const forP2 = snapshotFor(game.world, 'p2', events)!
+    const forP2 = snapshotFor(game.world, 'p2', events, '')!
     expect(forP2.events).toEqual([{ kind: 'chat', playerId: 'p2', name: 'Alice', text: 'hi' }])
   })
 })

@@ -9,6 +9,7 @@ import { RunOrb } from './RunOrb'
 const snapshotWith = (overrides: Partial<SnapshotMessage> = {}): SnapshotMessage => ({
   type: 'snapshot',
   tick: 1,
+  save: 'blob==',
   players: [
     {
       id: 'p1',

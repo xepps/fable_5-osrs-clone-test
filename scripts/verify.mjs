@@ -16,7 +16,7 @@ const login = async (context, name) => {
   page.on('pageerror', (error) => console.log(`[${name}] pageerror: ${error.message}`))
   await page.goto(BASE)
   await page.getByLabel('Display name').fill(name)
-  await page.getByRole('button', { name: 'Play' }).click()
+  await page.getByRole('button', { name: 'Create' }).click()
   await page.waitForSelector('.scene-container canvas', { timeout: 5000 })
   await page.waitForTimeout(1500)
   return page

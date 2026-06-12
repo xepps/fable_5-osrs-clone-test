@@ -2,6 +2,7 @@ import {
   GAME_MAP,
   initialSkillXp,
   INVENTORY_SIZE,
+  isWalkable,
   levelForXp,
   NPCS,
   SHOP_BASE_STOCK,
@@ -9,6 +10,7 @@ import {
   type ItemId,
   type ItemStack,
   type NpcDefId,
+  type PersistentPlayer,
   type Position,
   type SkillXp,
 } from '@osrs/shared'
@@ -78,28 +80,51 @@ export type SimWorld = {
 
 export const maxHpOf = (player: SimPlayer): number => levelForXp(player.skills.hitpoints)
 
-export const createPlayer = (id: string, name: string): SimPlayer => {
-  const skills = initialSkillXp()
+export const createPlayer = (id: string, name: string, restore?: PersistentPlayer): SimPlayer => {
+  const skills = restore?.skills ?? initialSkillXp()
+  const maxHp = levelForXp(skills.hitpoints)
   return {
     id,
     name,
-    position: GAME_MAP.spawnPoint,
+    position: restore && isWalkable(restore.position) ? restore.position : GAME_MAP.spawnPoint,
     facing: { dx: 0, dz: 1 },
     path: [],
-    inventory: Array.from({ length: INVENTORY_SIZE }, () => null),
-    equipment: { head: null, weapon: null },
+    inventory: restore
+      ? restore.inventory.map((stack) => (stack ? { ...stack } : null))
+      : Array.from({ length: INVENTORY_SIZE }, () => null),
+    equipment: restore
+      ? {
+          head: restore.equipment.head ? { ...restore.equipment.head } : null,
+          weapon: restore.equipment.weapon ? { ...restore.equipment.weapon } : null,
+        }
+      : { head: null, weapon: null },
     skills,
-    hp: levelForXp(skills.hitpoints),
+    hp: restore ? Math.min(maxHp, Math.max(1, restore.hp)) : maxHp,
     action: null,
     attackCooldown: 0,
     overhead: null,
     runEnabled: false,
-    runEnergy: 100,
+    runEnergy: restore?.runEnergy ?? 100,
     openInterface: null,
-    bank: [],
+    bank: restore ? restore.bank.map((stack) => ({ ...stack })) : [],
     lastAttackTick: null,
   }
 }
+
+export const persistentStateOf = (player: SimPlayer): PersistentPlayer => ({
+  version: 1,
+  name: player.name,
+  position: { x: player.position.x, z: player.position.z },
+  hp: player.hp,
+  skills: { ...player.skills },
+  inventory: player.inventory.map((stack) => (stack ? { ...stack } : null)),
+  equipment: {
+    head: player.equipment.head ? { ...player.equipment.head } : null,
+    weapon: player.equipment.weapon ? { ...player.equipment.weapon } : null,
+  },
+  bank: player.bank.map((stack) => ({ ...stack })),
+  runEnergy: player.runEnergy,
+})
 
 const npcMaxHp = (defId: NpcDefId): number => NPCS[defId].combat?.hitpoints ?? 1
 

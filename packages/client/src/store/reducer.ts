@@ -19,9 +19,10 @@ export type ContextMenuState = Readonly<{
 export type DialogueState = Readonly<{ npcName: string; lines: readonly string[]; index: number }>
 
 export type ClientState = Readonly<{
-  phase: 'naming' | 'playing'
+  phase: 'home' | 'playing'
   playerId: string | null
   displayName: string | null
+  loginError: string | null
   snapshot: SnapshotMessage | null
   chatLog: readonly ChatLine[]
   dialogue: DialogueState | null
@@ -31,6 +32,7 @@ export type ClientState = Readonly<{
 
 export type ClientEvent =
   | Readonly<{ type: 'welcomed'; playerId: string; name: string }>
+  | Readonly<{ type: 'loginRejected'; reason: string }>
   | Readonly<{ type: 'snapshotReceived'; snapshot: SnapshotMessage; now: number }>
   | Readonly<{ type: 'examined'; text: string }>
   | Readonly<{ type: 'systemMessage'; text: string }>
@@ -44,9 +46,10 @@ export type ClientEvent =
   | Readonly<{ type: 'dialogueAdvanced' }>
 
 export const initialState: ClientState = {
-  phase: 'naming',
+  phase: 'home',
   playerId: null,
   displayName: null,
+  loginError: null,
   snapshot: null,
   chatLog: [],
   dialogue: null,
@@ -93,7 +96,15 @@ const foldSnapshot = (state: ClientState, snapshot: SnapshotMessage, now: number
 export const reduce = (state: ClientState, event: ClientEvent): ClientState => {
   switch (event.type) {
     case 'welcomed':
-      return { ...state, phase: 'playing', playerId: event.playerId, displayName: event.name }
+      return {
+        ...state,
+        phase: 'playing',
+        playerId: event.playerId,
+        displayName: event.name,
+        loginError: null,
+      }
+    case 'loginRejected':
+      return { ...state, loginError: event.reason }
     case 'snapshotReceived':
       return foldSnapshot(state, event.snapshot, event.now)
     case 'examined':

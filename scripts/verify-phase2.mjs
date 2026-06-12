@@ -17,7 +17,7 @@ const page = await context.newPage()
 page.on('pageerror', (error) => console.log(`pageerror: ${error.message}`))
 await page.goto(BASE)
 await page.getByLabel('Display name').fill('Tester')
-await page.getByRole('button', { name: 'Play' }).click()
+await page.getByRole('button', { name: 'Create' }).click()
 await page.waitForSelector('.scene-container canvas', { timeout: 5000 })
 await page.waitForTimeout(2000)
 await page.screenshot({ path: `${SHOTS}/p2-01-spawn.png` })
@@ -33,11 +33,17 @@ const clickTile = async (x, z, settle = 3000) => {
 }
 
 const spawn = await self()
-check('player spawns in the centre chunk near (96,96)', spawn && Math.abs(spawn.x - 96) <= 2 && Math.abs(spawn.z - 96) <= 2)
+check(
+  'player spawns in the centre chunk near (96,96)',
+  spawn && Math.abs(spawn.x - 96) <= 2 && Math.abs(spawn.z - 96) <= 2,
+)
 
 check('minimap is visible', await page.getByRole('img', { name: 'Minimap' }).isVisible())
 const runOrb = page.getByRole('button', { name: 'Toggle run' })
-check('run orb is visible with 100 energy', (await page.locator('.run-orb-energy').textContent()) === '100')
+check(
+  'run orb is visible with 100 energy',
+  (await page.locator('.run-orb-energy').textContent()) === '100',
+)
 
 await runOrb.click()
 await page.waitForTimeout(1400)
@@ -61,7 +67,10 @@ await page.waitForTimeout(300)
 await clickTile(101, 93, 5000)
 await clickTile(101, 90, 5000)
 const inBank = await self()
-check('player can walk through the bank doorway', inBank && inBank.z <= 91 && inBank.x >= 99 && inBank.x <= 104)
+check(
+  'player can walk through the bank doorway',
+  inBank && inBank.z <= 91 && inBank.x >= 99 && inBank.x <= 104,
+)
 await page.screenshot({ path: `${SHOTS}/p2-03-inside-bank.png` })
 
 const boothPoint = await tile(100, 88)
@@ -104,10 +113,7 @@ if (shopkeeperEntity) {
     if ((await netButton.count()) > 0) {
       await netButton.click()
       await page.waitForTimeout(1200)
-      check(
-        'bought a fishing net',
-        (await page.getByLabel(/Sell Small fishing net/).count()) > 0,
-      )
+      check('bought a fishing net', (await page.getByLabel(/Sell Small fishing net/).count()) > 0)
     }
     await page.getByRole('button', { name: 'Close' }).click()
   }

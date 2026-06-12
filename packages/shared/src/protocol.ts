@@ -20,7 +20,12 @@ const inventorySlot = z
 const equipSlot = z.enum(['head', 'weapon'])
 
 export const clientMessageSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('hello'), name: z.string().trim().min(1).max(12) }),
+  z.object({
+    type: z.literal('hello'),
+    name: z.string().trim().min(1).max(12),
+    characterId: z.string().uuid(),
+    save: z.string().nullable(),
+  }),
   z.object({ type: z.literal('moveTo'), x: coordinate, z: coordinate }),
   z.object({ type: z.literal('takeItem'), x: coordinate, z: coordinate, itemId }),
   z.object({ type: z.literal('talkToNpc'), npcId: z.string() }),
@@ -67,6 +72,27 @@ const facing = z.object({
 })
 
 const itemStack = z.object({ itemId, quantity: z.number().int().positive() })
+
+const skillsSchema = z.object(
+  Object.fromEntries(SKILLS.map((skill) => [skill, z.number().min(0)])) as Record<
+    Skill,
+    z.ZodNumber
+  >,
+)
+
+export const persistentPlayerSchema = z.object({
+  version: z.literal(1),
+  name: z.string().trim().min(1).max(12),
+  position: z.object({ x: coordinate, z: coordinate }),
+  hp: z.number().int().min(0),
+  skills: skillsSchema,
+  inventory: z.array(itemStack.nullable()).length(INVENTORY_SIZE),
+  equipment: z.object({ head: itemStack.nullable(), weapon: itemStack.nullable() }),
+  bank: z.array(itemStack),
+  runEnergy: z.number().int().min(0).max(100),
+})
+
+export type PersistentPlayer = z.infer<typeof persistentPlayerSchema>
 
 const entityAnim = z.enum(['attack']).optional()
 
@@ -119,12 +145,7 @@ const privateState = z.object({
   hp: z.number().int().min(0),
   inventory: z.array(itemStack.nullable()).length(INVENTORY_SIZE),
   equipment: z.object({ head: itemStack.nullable(), weapon: itemStack.nullable() }),
-  skills: z.object(
-    Object.fromEntries(SKILLS.map((skill) => [skill, z.number().min(0)])) as Record<
-      Skill,
-      z.ZodNumber
-    >,
-  ),
+  skills: skillsSchema,
   runEnergy: z.number().int().min(0).max(100),
   runEnabled: z.boolean(),
   openInterface: z.enum(['bank', 'shop']).nullable(),
@@ -134,6 +155,7 @@ const privateState = z.object({
 
 export const serverMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('welcome'), playerId: z.string(), name: z.string() }),
+  z.object({ type: z.literal('loginRejected'), reason: z.string() }),
   z.object({
     type: z.literal('snapshot'),
     tick: z.number().int().min(0),
@@ -143,6 +165,7 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
     depletedObjects: z.array(z.string()),
     events: z.array(gameEvent),
     you: privateState,
+    save: z.string(),
   }),
 ])
 

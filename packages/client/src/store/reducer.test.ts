@@ -5,6 +5,7 @@ import { initialState, reduce, type ClientState } from './reducer'
 const emptySnapshot = (overrides: Partial<SnapshotMessage> = {}): SnapshotMessage => ({
   type: 'snapshot',
   tick: 1,
+  save: 'blob==',
   players: [],
   npcs: [],
   groundItems: [],
@@ -36,12 +37,28 @@ const playing = (): ClientState =>
   reduce(initialState, { type: 'welcomed', playerId: 'p1', name: 'Bob' })
 
 describe('login flow', () => {
-  it('starts on the naming screen and enters the world once welcomed', () => {
-    expect(initialState.phase).toBe('naming')
+  it('starts on the home screen and enters the world once welcomed', () => {
+    expect(initialState.phase).toBe('home')
     const state = playing()
     expect(state.phase).toBe('playing')
     expect(state.playerId).toBe('p1')
     expect(state.displayName).toBe('Bob')
+  })
+
+  it('stays home and surfaces the reason when a login is rejected', () => {
+    const state = reduce(initialState, {
+      type: 'loginRejected',
+      reason: 'Your save data could not be read.',
+    })
+    expect(state.phase).toBe('home')
+    expect(state.loginError).toBe('Your save data could not be read.')
+  })
+
+  it('clears any login error once welcomed', () => {
+    const rejected = reduce(initialState, { type: 'loginRejected', reason: 'nope' })
+    const state = reduce(rejected, { type: 'welcomed', playerId: 'p1', name: 'Bob' })
+    expect(state.loginError).toBeNull()
+    expect(state.phase).toBe('playing')
   })
 })
 

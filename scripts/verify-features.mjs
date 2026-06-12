@@ -85,7 +85,7 @@ const page = await context.newPage()
 page.on('pageerror', (error) => console.log(`pageerror: ${error.message}`))
 await page.goto(BASE)
 await page.getByLabel('Display name').fill('Tester')
-await page.getByRole('button', { name: 'Play' }).click()
+await page.getByRole('button', { name: 'Create' }).click()
 await page.waitForSelector('.scene-container canvas')
 await page.waitForTimeout(2000)
 

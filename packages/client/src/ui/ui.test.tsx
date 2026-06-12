@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { render } from 'vitest-browser-react'
 import { page, userEvent } from '@vitest/browser/context'
 import type { PrivateState } from '@osrs/shared'
-import { NamePrompt } from './NamePrompt'
 import { ContextMenu } from './ContextMenu'
 import { ChatPanel } from './ChatPanel'
 import { DialogueBox } from './DialogueBox'
@@ -27,23 +26,6 @@ const youWith = (overrides: Partial<PrivateState> = {}): PrivateState => ({
   bank: null,
   shop: null,
   ...overrides,
-})
-
-describe('NamePrompt', () => {
-  it('submits a trimmed display name', async () => {
-    const onSubmit = vi.fn()
-    render(<NamePrompt onSubmit={onSubmit} />)
-    await userEvent.fill(page.getByLabelText('Display name'), '  Zezima ')
-    await page.getByRole('button', { name: 'Play' }).click()
-    expect(onSubmit).toHaveBeenCalledWith('Zezima')
-  })
-
-  it('refuses to submit an empty name', async () => {
-    const onSubmit = vi.fn()
-    render(<NamePrompt onSubmit={onSubmit} />)
-    await expect.element(page.getByRole('button', { name: 'Play' })).toBeDisabled()
-    expect(onSubmit).not.toHaveBeenCalled()
-  })
 })
 
 describe('ContextMenu', () => {

@@ -12,6 +12,7 @@ import {
   SHOP_BASE_STOCK,
   type ItemId,
   type ClientMessage,
+  type PersistentPlayer,
   type CombatantStats,
   type GameEvent,
   type ItemStack,
@@ -32,7 +33,7 @@ import {
 } from './world'
 
 export type SimIntent =
-  | Readonly<{ kind: 'join'; playerId: string; name: string }>
+  | Readonly<{ kind: 'join'; playerId: string; name: string; restore?: PersistentPlayer }>
   | Readonly<{ kind: 'leave'; playerId: string }>
   | Readonly<{ kind: 'message'; playerId: string; message: ClientMessage }>
 
@@ -311,7 +312,7 @@ const eatFromSlot = (events: AddressedEvent[], player: SimPlayer, slot: number) 
 
 const applyIntent = (world: SimWorld, events: AddressedEvent[], intent: SimIntent) => {
   if (intent.kind === 'join') {
-    world.players[intent.playerId] = createPlayer(intent.playerId, intent.name)
+    world.players[intent.playerId] = createPlayer(intent.playerId, intent.name, intent.restore)
     return
   }
   if (intent.kind === 'leave') {

@@ -94,22 +94,81 @@ body,
   background: radial-gradient(circle at 50% 30%, #2e3b27, #14130e 75%);
 }
 
-.name-prompt {
+.home-screen {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
   padding: 30px 40px;
-  align-items: center;
+  align-items: stretch;
+  width: 340px;
 }
 
-.name-prompt h1 {
+.home-screen h1 {
   margin: 0;
   font-size: 20px;
   color: #ffb83f;
   text-shadow: 1px 1px 0 #000;
+  text-align: center;
 }
 
-.name-prompt input {
+.home-screen h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #c8b48a;
+}
+
+.login-error {
+  margin: 0;
+  padding: 8px 10px;
+  background: #4a1f1f;
+  border: 1px solid #8a3232;
+  color: #ff9d9d;
+  font-size: 13px;
+}
+
+.character-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.character-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 10px 12px;
+  background: #181610;
+  border: 1px solid #6d5f48;
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 15px;
+}
+
+.character-row:hover {
+  background: #262217;
+}
+
+.character-play {
+  color: #ffb83f;
+  font-size: 13px;
+}
+
+.character-create {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid #6d5f48;
+  padding-top: 14px;
+}
+
+.character-create input {
   font-size: 16px;
   padding: 8px 10px;
   background: #181610;
@@ -118,7 +177,7 @@ body,
   text-align: center;
 }
 
-.name-prompt button {
+.character-create button {
   font-size: 16px;
   padding: 8px 28px;
   background: linear-gradient(#7a2a1d, #571d13);
@@ -127,7 +186,7 @@ body,
   cursor: pointer;
 }
 
-.name-prompt button:disabled {
+.character-create button:disabled {
   opacity: 0.5;
   cursor: default;
 }
