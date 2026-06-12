@@ -3,6 +3,7 @@ import {
   createCharacter,
   getSaveBlob,
   listCharacters,
+  removeCharacter,
   setSaveBlob,
   touchCharacter,
 } from './characters'
@@ -29,6 +30,17 @@ describe('the character roster', () => {
     createCharacter(localStorage, 'Second', 2000)
     touchCharacter(localStorage, first.id, 3000)
     expect(listCharacters(localStorage)[0]).toEqual({ ...first, lastPlayedAt: 3000 })
+  })
+
+  it('removes a character together with its save blob', () => {
+    const doomed = createCharacter(localStorage, 'Doomed', 1000)
+    const keeper = createCharacter(localStorage, 'Keeper', 2000)
+    setSaveBlob(localStorage, doomed.id, 'blob-doomed==')
+    setSaveBlob(localStorage, keeper.id, 'blob-keeper==')
+    removeCharacter(localStorage, doomed.id)
+    expect(listCharacters(localStorage)).toEqual([keeper])
+    expect(getSaveBlob(localStorage, doomed.id)).toBeNull()
+    expect(getSaveBlob(localStorage, keeper.id)).toBe('blob-keeper==')
   })
 
   it('treats a corrupt index as empty', () => {

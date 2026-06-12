@@ -67,17 +67,26 @@ await page.evaluate(() => {
   localStorage.setItem(key, blob.slice(0, 10) + corrupted[0] + blob.slice(11))
 })
 await page.reload()
-await page.waitForTimeout(800)
-await page.getByRole('button', { name: 'Play Saver' }).click()
-await page.waitForTimeout(2000)
-check('a tampered save is rejected with an error', await page.getByRole('alert').isVisible())
+await page.waitForTimeout(2500)
+check(
+  'a tampered character is removed from the list at launch',
+  (await page.getByRole('button', { name: 'Play Saver' }).count()) === 0,
+)
+check(
+  'its save blob is purged from storage',
+  await page.evaluate(() => {
+    const index = JSON.parse(localStorage.getItem('osrs.characters') ?? '[]')
+    const blobs = Object.keys(localStorage).filter((key) => key.startsWith('osrs.save.'))
+    return index.length === 0 && blobs.length === 0
+  }),
+)
 await page.screenshot({ path: `${SHOTS}/s-04-tampered.png` })
 
 await page.getByLabel('Display name').fill('Fresh')
 await page.getByRole('button', { name: 'Create' }).click()
 await page.waitForSelector('.scene-container canvas', { timeout: 5000 })
 await page.waitForTimeout(1500)
-check('creating a new character still works after a rejection', true)
+check('creating a new character still works after a purge', true)
 
 const second = await context.newPage()
 await second.goto(BASE)

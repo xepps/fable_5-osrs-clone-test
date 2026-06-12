@@ -450,6 +450,15 @@ const npcTurn = (world: SimWorld, events: AddressedEvent[], npc: SimNpc, rng: Si
   const target = npc.targetPlayerId ? world.players[npc.targetPlayerId] : undefined
   if (!target) {
     npc.targetPlayerId = null
+    const distanceHome = Math.max(
+      Math.abs(npc.position.x - npc.home.x),
+      Math.abs(npc.position.z - npc.home.z),
+    )
+    if (distanceHome > npc.wanderRadius) {
+      const path = findPath(npc.position, npc.home, isWalkable)
+      if (path.length > 0) stepNpc(npc, path[0]!)
+      return
+    }
     wander(npc, rng)
     return
   }

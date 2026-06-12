@@ -187,6 +187,21 @@ describe('client message validation', () => {
     ).toBe(false)
   })
 
+  it('accepts a save validation request', () => {
+    expect(
+      clientMessageSchema.safeParse({
+        type: 'validateSaves',
+        saves: [{ characterId: CHARACTER_ID, save: 'blob==' }],
+      }).success,
+    ).toBe(true)
+    expect(
+      clientMessageSchema.safeParse({
+        type: 'validateSaves',
+        saves: [{ characterId: 'not-a-uuid', save: 'blob==' }],
+      }).success,
+    ).toBe(false)
+  })
+
   it('accepts a run toggle', () => {
     expect(clientMessageSchema.safeParse({ type: 'setRun', enabled: true }).success).toBe(true)
     expect(clientMessageSchema.safeParse({ type: 'setRun', enabled: false }).success).toBe(true)
@@ -212,6 +227,15 @@ describe('server message validation', () => {
   it('accepts a login rejection', () => {
     expect(
       serverMessageSchema.safeParse({ type: 'loginRejected', reason: 'Bad save.' }).success,
+    ).toBe(true)
+  })
+
+  it('accepts save validation results', () => {
+    expect(
+      serverMessageSchema.safeParse({
+        type: 'savesValidated',
+        results: [{ characterId: CHARACTER_ID, valid: false }],
+      }).success,
     ).toBe(true)
   })
 

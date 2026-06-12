@@ -1,6 +1,7 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import type { ClientMessage } from '@osrs/shared'
 import { menuOptionsFor, type GameAction } from './game/actions'
+import { loadOsrsAssets, type OsrsAssets } from './scene/assets'
 import { GameScene } from './scene/GameScene'
 import type { Store } from './store/store'
 import { BankPanel } from './ui/BankPanel'
@@ -16,6 +17,13 @@ type Props = Readonly<{
   store: Store
   send: (message: ClientMessage) => void
 }>
+
+let assetsPromise: Promise<OsrsAssets | null> | null = null
+
+const getAssets = (): Promise<OsrsAssets | null> => {
+  assetsPromise ??= loadOsrsAssets()
+  return assetsPromise
+}
 
 export const GameView = ({ store, send }: Props) => {
   const state = useSyncExternalStore(store.subscribe, store.getState)
@@ -35,31 +43,43 @@ export const GameView = ({ store, send }: Props) => {
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
-    const scene = new GameScene(container, {
-      onLeftClick: (pick) => {
-        if (store.getState().contextMenu) {
-          store.dispatch({ type: 'menuClosed' })
-          return
-        }
-        const options = menuOptionsFor(pick.targets, pick.tile)
-        const top = options[0]
-        if (!top || top.action.type === 'cancel') return
-        if (pick.tile) scene.flashMarker(pick.tile, top.label === 'Walk here' ? 'walk' : 'interact')
-        executeRef.current(top.action)
-      },
-      onRightClick: (pick) => {
-        store.dispatch({
-          type: 'menuOpened',
-          screenX: pick.screenX,
-          screenY: pick.screenY,
-          options: menuOptionsFor(pick.targets, pick.tile),
-        })
-      },
+    let cancelled = false
+    let scene: GameScene | null = null
+    getAssets().then((assets) => {
+      if (cancelled || !containerRef.current) return
+      scene = new GameScene(
+        containerRef.current,
+        {
+          onLeftClick: (pick) => {
+            if (store.getState().contextMenu) {
+              store.dispatch({ type: 'menuClosed' })
+              return
+            }
+            const options = menuOptionsFor(pick.targets, pick.tile)
+            const top = options[0]
+            if (!top || top.action.type === 'cancel') return
+            if (pick.tile)
+              scene?.flashMarker(pick.tile, top.label === 'Walk here' ? 'walk' : 'interact')
+            executeRef.current(top.action)
+          },
+          onRightClick: (pick) => {
+            store.dispatch({
+              type: 'menuOpened',
+              screenX: pick.screenX,
+              screenY: pick.screenY,
+              options: menuOptionsFor(pick.targets, pick.tile),
+            })
+          },
+        },
+        assets,
+      )
+      sceneRef.current = scene
+      scene.sync(store.getState())
     })
-    sceneRef.current = scene
     return () => {
+      cancelled = true
       sceneRef.current = null
-      scene.dispose()
+      scene?.dispose()
     }
   }, [store])
 

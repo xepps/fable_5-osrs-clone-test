@@ -5,3 +5,5 @@ dist/
 .vite/
 scripts/shots/
 __screenshots__/
+packages/client/public/osrs-assets/
+.env

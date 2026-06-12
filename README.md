@@ -91,6 +91,24 @@ crossroads with full hitpoints and keep all your items.
 - **Skills & XP** — Attack, Strength, Defence, Hitpoints, Woodcutting using the real OSRS
   XP table
 
+## Optional: real OSRS models
+
+The game ships with simple procedural models, but it can render real OSRS models and
+animations extracted from your own game cache (they are never committed to this repo):
+
+```bash
+npm run extract-assets
+```
+
+- Reads the RuneLite cache at `C:\Users\<you>\.runelite\jagexcache\oldschool\LIVE`
+  (the default path is the WSL mount `/mnt/c/Users/krist/.runelite/jagexcache/oldschool/LIVE/`);
+  point somewhere else with `CACHE_PATH=/path/to/cache npm run extract-assets`.
+- No local cache? `CACHE_PATH=latest npm run extract-assets` downloads one from
+  [OpenRS2](https://archive.openrs2.org/).
+- Writes GLTF models plus a manifest to `packages/client/public/osrs-assets/`
+  (gitignored). Reload the client and players, NPCs, trees, fires and ground items
+  switch to the real models; delete the folder to fall back to procedural rendering.
+
 ## Troubleshooting
 
 - **"Choose a display name" never goes away after clicking Play** — the game server isn't

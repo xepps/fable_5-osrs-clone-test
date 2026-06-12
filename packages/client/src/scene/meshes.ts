@@ -159,6 +159,15 @@ const seededRandom = (seed: number) => {
   }
 }
 
+export const buildStump = (): THREE.Mesh => {
+  const stump = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.16, 0.2, 0.3, 6),
+    new THREE.MeshLambertMaterial({ color: '#6b4a2a' }),
+  )
+  stump.position.y = 0.15
+  return stump
+}
+
 export const buildTree = (seed = 0): TreeView => {
   const random = seededRandom(seed)
   const group = new THREE.Group()
@@ -189,8 +198,7 @@ export const buildTree = (seed = 0): TreeView => {
   const scale = 0.85 + random() * 0.35
   canopy.scale.setScalar(scale)
 
-  const stump = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.3, 6), trunkMaterial)
-  stump.position.y = 0.15
+  const stump = buildStump()
   stump.visible = false
 
   group.add(canopy, stump)

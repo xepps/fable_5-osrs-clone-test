@@ -46,6 +46,14 @@ export const touchCharacter = (storage: Storage, characterId: string, now: numbe
   )
 }
 
+export const removeCharacter = (storage: Storage, characterId: string) => {
+  writeIndex(
+    storage,
+    readIndex(storage).filter((character) => character.id !== characterId),
+  )
+  storage.removeItem(saveKeyFor(characterId))
+}
+
 export const getSaveBlob = (storage: Storage, characterId: string): string | null =>
   storage.getItem(saveKeyFor(characterId))
 

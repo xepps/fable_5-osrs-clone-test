@@ -2,6 +2,14 @@ import * as THREE from 'three'
 import { GAME_MAP, ITEMS, MAP_SIZE, NPCS, type ItemId, type SnapshotMessage } from '@osrs/shared'
 import type { PickTarget } from '../game/actions'
 import type { ClientState, HitsplatFx } from '../store/reducer'
+import { clipFor, resolveClip } from './animation'
+import {
+  instantiateAsset,
+  wornAssetKeys,
+  type AssetTemplate,
+  type ClipName,
+  type OsrsAssets,
+} from './assets'
 import {
   buildBuilding,
   buildButterfly,
@@ -9,6 +17,7 @@ import {
   buildGroundItem,
   buildHumanoid,
   buildSmokePuff,
+  buildStump,
   buildTerrain,
   buildTree,
   buildWaterOverlay,
@@ -31,8 +40,26 @@ export type SceneCallbacks = Readonly<{
   onRightClick: (pick: PickResult) => void
 }>
 
+type WornSlot = 'head' | 'weapon'
+
+type AnimatedPart = {
+  mixer: THREE.AnimationMixer
+  actions: Partial<Record<ClipName, THREE.AnimationAction>>
+}
+
+type GltfAttachment = AnimatedPart & { assetKey: string; object: THREE.Group }
+
+type EntityVisual =
+  | { kind: 'procedural'; view: HumanoidView }
+  | (AnimatedPart & {
+      kind: 'gltf'
+      current: ClipName | null
+      attachments: Map<WornSlot, GltfAttachment>
+    })
+
 type EntityView = {
-  view: HumanoidView
+  group: THREE.Group
+  visual: EntityVisual
   from: THREE.Vector3
   to: THREE.Vector3
   moveStartedAt: number
@@ -45,6 +72,8 @@ type EntityView = {
   stepDistance: number
   attackUntil: number
 }
+
+const CROSSFADE_SECONDS = 0.15
 
 const TICK_MILLIS = 600
 const ATTACK_ANIM_MILLIS = 480
@@ -79,9 +108,10 @@ export class GameScene {
   private readonly trees = new Map<string, TreeView>()
   private readonly worldObjects = new Map<string, THREE.Group>()
   private readonly entities = new Map<string, EntityView>()
-  private readonly groundItems = new Map<string, THREE.Mesh>()
+  private readonly groundItems = new Map<string, THREE.Object3D>()
   private readonly hitsplatElements = new Map<string, HTMLDivElement>()
   private readonly marker: THREE.Group
+  private readonly ambientMixers: THREE.AnimationMixer[] = []
   private markerShownAt = 0
   private selfId: string | null = null
   private cameraAzimuth = Math.PI
@@ -89,11 +119,13 @@ export class GameScene {
   private cameraRadius = 13
   private animationFrame = 0
   private disposed = false
+  private lastFrameAt = performance.now()
   private hitsplats: readonly HitsplatFx[] = []
 
   constructor(
     container: HTMLElement,
     private readonly callbacks: SceneCallbacks,
+    private readonly assets: OsrsAssets | null = null,
   ) {
     this.container = container
     this.renderer = new THREE.WebGLRenderer({ antialias: true })
@@ -154,7 +186,7 @@ export class GameScene {
 
     GAME_MAP.objects.forEach((object) => {
       if (object.kind === 'tree') {
-        const tree = buildTree(object.x * 31 + object.z)
+        const tree = this.buildTreeView(object.x * 31 + object.z)
         tree.group.position.set(object.x + 0.5, 0, object.z + 0.5)
         tree.group.userData['pickTarget'] = {
           kind: 'tree',
@@ -166,7 +198,7 @@ export class GameScene {
         this.scene.add(tree.group)
         return
       }
-      const view = buildWorldObject(object.kind)
+      const view = this.buildWorldObjectView(object.kind)
       view.position.set(object.x + 0.5, 0, object.z + 0.5)
       view.userData['pickTarget'] = {
         kind: 'object',
@@ -189,6 +221,88 @@ export class GameScene {
     this.loop()
   }
 
+  private buildTreeView(seed: number): TreeView {
+    const template = this.assets?.get('obj.tree')
+    if (!template) return buildTree(seed)
+    const group = new THREE.Group()
+    const canopy = instantiateAsset(template)
+    canopy.rotation.y = (seed % 7) * 0.9
+    const stump = buildStump()
+    stump.visible = false
+    group.add(canopy, stump)
+    return { group, canopy, stump }
+  }
+
+  private buildWorldObjectView(kind: Parameters<typeof buildWorldObject>[0]): THREE.Group {
+    const template = this.assets?.get(`obj.${kind}`)
+    if (!template) return buildWorldObject(kind)
+    const view = instantiateAsset(template)
+    const idle = template.clips.get('idle')
+    if (idle) {
+      const mixer = new THREE.AnimationMixer(view)
+      mixer.clipAction(idle).play()
+      this.ambientMixers.push(mixer)
+    }
+    return view
+  }
+
+  private buildAnimatedPart(root: THREE.Object3D, template: AssetTemplate): AnimatedPart {
+    const mixer = new THREE.AnimationMixer(root)
+    const actions: Partial<Record<ClipName, THREE.AnimationAction>> = {}
+    template.clips.forEach((clip, name) => {
+      const action = mixer.clipAction(clip)
+      if (name === 'attack') {
+        action.setLoop(THREE.LoopOnce, 1)
+        action.clampWhenFinished = true
+      }
+      actions[name] = action
+    })
+    return { mixer, actions }
+  }
+
+  private buildGltfVisual(template: AssetTemplate): { group: THREE.Group; visual: EntityVisual } {
+    const group = instantiateAsset(template)
+    const part = this.buildAnimatedPart(group, template)
+    return {
+      group,
+      visual: { kind: 'gltf', ...part, current: null, attachments: new Map() },
+    }
+  }
+
+  private syncGltfEquipment(
+    entity: EntityView,
+    equipment: Readonly<{ head: string | null; weapon: string | null }>,
+  ) {
+    if (entity.visual.kind !== 'gltf') return
+    const visual = entity.visual
+    const desired = wornAssetKeys(equipment)
+    for (const slot of ['head', 'weapon'] as const) {
+      const assetKey = desired[slot]
+      const existing = visual.attachments.get(slot)
+      if (existing?.assetKey === assetKey) continue
+      if (existing) {
+        entity.group.remove(existing.object)
+        visual.attachments.delete(slot)
+      }
+      if (assetKey === null) continue
+      const template = this.assets?.get(assetKey)
+      if (!template) continue
+      const object = instantiateAsset(template)
+      entity.group.add(object)
+      const part = this.buildAnimatedPart(object, template)
+      const attachment: GltfAttachment = { assetKey, object, ...part }
+      visual.attachments.set(slot, attachment)
+      if (visual.current) {
+        const action = part.actions[visual.current]
+        const bodyAction = visual.actions[visual.current]
+        if (action) {
+          action.play()
+          if (bodyAction) action.time = bodyAction.time
+        }
+      }
+    }
+  }
+
   private screenCentreOf(object: THREE.Object3D): { x: number; y: number } | null {
     const centre = new THREE.Box3().setFromObject(object).getCenter(new THREE.Vector3())
     return this.projectToScreen(centre)
@@ -201,7 +315,7 @@ export class GameScene {
         this.projectToScreen(new THREE.Vector3(x + 0.5, 0.05, z + 0.5)),
       entity: (id: string) => {
         const entity = this.entities.get(id)
-        return entity && entity.visible ? this.screenCentreOf(entity.view.group) : null
+        return entity && entity.visible ? this.screenCentreOf(entity.group) : null
       },
       groundItem: (x: number, z: number, itemId: string) => {
         const mesh = this.groundItems.get(`${x},${z},${itemId}`)
@@ -214,7 +328,7 @@ export class GameScene {
       self: () => {
         const entity = this.selfId ? this.entities.get(this.selfId) : undefined
         if (!entity) return null
-        const { x, z } = entity.view.group.position
+        const { x, z } = entity.group.position
         return { x: Math.floor(x), z: Math.floor(z) }
       },
     }
@@ -305,7 +419,7 @@ export class GameScene {
     this.trees.forEach((tree) => pickables.push(tree.group))
     this.worldObjects.forEach((object) => pickables.push(object))
     this.entities.forEach((entity) => {
-      if (entity.visible) pickables.push(entity.view.group)
+      if (entity.visible) pickables.push(entity.group)
     })
     this.groundItems.forEach((mesh) => pickables.push(mesh))
     const intersections = this.raycaster.intersectObjects(pickables, true)
@@ -332,17 +446,25 @@ export class GameScene {
 
   private ensureEntity(
     id: string,
-    build: () => HumanoidView,
+    assetKey: string,
+    buildFallback: () => HumanoidView,
     height: number,
     pickTarget: PickTarget,
   ): EntityView {
     const existing = this.entities.get(id)
     if (existing) return existing
-    const view = build()
-    view.group.userData['pickTarget'] = pickTarget
-    this.scene.add(view.group)
+    const template = this.assets?.get(assetKey)
+    const { group, visual } = template
+      ? this.buildGltfVisual(template)
+      : (() => {
+          const view = buildFallback()
+          return { group: view.group, visual: { kind: 'procedural', view } as EntityVisual }
+        })()
+    group.userData['pickTarget'] = pickTarget
+    this.scene.add(group)
     const entity: EntityView = {
-      view,
+      group,
+      visual,
       from: new THREE.Vector3(),
       to: new THREE.Vector3(),
       moveStartedAt: 0,
@@ -368,7 +490,7 @@ export class GameScene {
   private removeEntity(id: string) {
     const entity = this.entities.get(id)
     if (!entity) return
-    this.scene.remove(entity.view.group)
+    this.scene.remove(entity.group)
     entity.labels.overhead.remove()
     entity.labels.hpBar.remove()
     this.entities.delete(id)
@@ -380,9 +502,9 @@ export class GameScene {
       entity.from.copy(target)
       entity.to.copy(target)
       entity.moveStartedAt = performance.now()
-      entity.view.group.position.copy(target)
+      entity.group.position.copy(target)
     } else if (!entity.to.equals(target)) {
-      entity.from.copy(entity.view.group.position)
+      entity.from.copy(entity.group.position)
       entity.to.copy(target)
       entity.moveStartedAt = performance.now()
       entity.stepDistance = entity.from.distanceTo(entity.to)
@@ -392,11 +514,24 @@ export class GameScene {
     }
   }
 
+  private triggerAttack(entity: EntityView) {
+    entity.attackUntil = performance.now() + ATTACK_ANIM_MILLIS
+    if (entity.visual.kind !== 'gltf') return
+    const visual = entity.visual
+    if (!visual.actions.attack) return
+    visual.current = 'attack'
+    const parts: AnimatedPart[] = [visual, ...visual.attachments.values()]
+    parts.forEach((part) => {
+      part.actions.attack?.reset().fadeIn(CROSSFADE_SECONDS).play()
+    })
+  }
+
   private syncSnapshot(snapshot: SnapshotMessage) {
     const seenEntities = new Set<string>()
     snapshot.players.forEach((player) => {
       const entity = this.ensureEntity(
         player.id,
+        'npc.man',
         () => buildHumanoid(playerAppearance(player.id)),
         1.55,
         { kind: 'player', id: player.id, name: player.name },
@@ -404,16 +539,21 @@ export class GameScene {
       seenEntities.add(player.id)
       this.moveEntity(entity, player.x, player.z, player.facing)
       entity.visible = true
-      entity.view.group.visible = true
+      entity.group.visible = true
       entity.hp = player.hp
       entity.maxHp = player.maxHp
-      entity.view.helmet.visible = player.equipment.head !== null
-      entity.view.hair.visible = player.equipment.head === null
-      entity.view.weapon.visible = player.equipment.weapon !== null
-      entity.view.axe.visible = player.equipment.weapon === 'bronze_axe'
-      entity.view.sword.visible = player.equipment.weapon !== 'bronze_axe'
+      if (entity.visual.kind === 'procedural') {
+        const { view } = entity.visual
+        view.helmet.visible = player.equipment.head !== null
+        view.hair.visible = player.equipment.head === null
+        view.weapon.visible = player.equipment.weapon !== null
+        view.axe.visible = player.equipment.weapon === 'bronze_axe'
+        view.sword.visible = player.equipment.weapon !== 'bronze_axe'
+      } else {
+        this.syncGltfEquipment(entity, player.equipment)
+      }
       if (player.anim === 'attack') {
-        entity.attackUntil = performance.now() + ATTACK_ANIM_MILLIS
+        this.triggerAttack(entity)
       }
       entity.labels.overhead.textContent = player.overheadText
       entity.labels.overhead.style.display = player.overheadText ? 'block' : 'none'
@@ -422,6 +562,7 @@ export class GameScene {
       const def = NPCS[npc.defId]
       const entity = this.ensureEntity(
         npc.id,
+        `npc.${npc.defId}`,
         () => (npc.defId === 'cow' ? buildCow() : buildHumanoid(npcAppearance(npc.defId))),
         npc.defId === 'goblin' ? 1.3 : npc.defId === 'cow' ? 1.2 : 1.55,
         {
@@ -434,11 +575,11 @@ export class GameScene {
       )
       seenEntities.add(npc.id)
       entity.visible = !npc.dead
-      entity.view.group.visible = !npc.dead
+      entity.group.visible = !npc.dead
       entity.hp = npc.hp
       entity.maxHp = npc.maxHp
       if (npc.anim === 'attack') {
-        entity.attackUntil = performance.now() + ATTACK_ANIM_MILLIS
+        this.triggerAttack(entity)
       }
       if (!npc.dead) this.moveEntity(entity, npc.x, npc.z, npc.facing)
       entity.labels.overhead.style.display = 'none'
@@ -452,9 +593,16 @@ export class GameScene {
       const key = `${item.x},${item.z},${item.itemId}`
       seenItems.add(key)
       if (this.groundItems.has(key)) return
-      const mesh = buildGroundItem(item.itemId as ItemId)
-      mesh.position.x += item.x + 0.5
-      mesh.position.z += item.z + 0.5
+      const template = this.assets?.get(`item.${item.itemId}`)
+      let mesh: THREE.Object3D
+      if (template) {
+        mesh = instantiateAsset(template)
+        mesh.position.set(item.x + 0.5, 0.02, item.z + 0.5)
+      } else {
+        mesh = buildGroundItem(item.itemId as ItemId)
+        mesh.position.x += item.x + 0.5
+        mesh.position.z += item.z + 0.5
+      }
       mesh.userData['pickTarget'] = {
         kind: 'groundItem',
         x: item.x,
@@ -496,9 +644,7 @@ export class GameScene {
 
   private updateOverlays(now: number) {
     this.entities.forEach((entity, id) => {
-      const head = entity.view.group.position
-        .clone()
-        .add(new THREE.Vector3(0, entity.height + 0.45, 0))
+      const head = entity.group.position.clone().add(new THREE.Vector3(0, entity.height + 0.45, 0))
       const screen = entity.visible ? this.projectToScreen(head) : null
       const { overhead, hpBar, hpFill } = entity.labels
       if (!screen) {
@@ -530,7 +676,7 @@ export class GameScene {
           element.style.display = 'block'
           this.hitsplatElements.set(key, element)
         }
-        const chest = entity.view.group.position.clone().add(new THREE.Vector3(0, 0.8, 0))
+        const chest = entity.group.position.clone().add(new THREE.Vector3(0, 0.8, 0))
         const chestScreen = this.projectToScreen(chest)
         const element = this.hitsplatElements.get(key)!
         if (chestScreen) {
@@ -547,39 +693,63 @@ export class GameScene {
     })
   }
 
-  private animateEntities(now: number) {
+  private animateEntities(now: number, deltaSeconds: number) {
     this.entities.forEach((entity) => {
-      const { group, leftLeg, rightLeg, leftArm, rightArm } = entity.view
+      const { group } = entity
       const t = Math.min(1, (now - entity.moveStartedAt) / TICK_MILLIS)
       group.position.lerpVectors(entity.from, entity.to, t)
       const moving = t < 1 && !entity.from.equals(entity.to)
       const running = entity.stepDistance > 1.5
-      const swingSpeed = running ? 0.019 : 0.012
-      const swingAmplitude = running ? 0.8 : 0.55
-      const swing = moving ? Math.sin(now * swingSpeed) * swingAmplitude : 0
-      leftLeg.rotation.x = swing
-      rightLeg.rotation.x = -swing
-      leftArm.rotation.x = -swing * 0.7
-      if (now < entity.attackUntil) {
-        const progress = 1 - (entity.attackUntil - now) / ATTACK_ANIM_MILLIS
-        rightArm.rotation.x = -Math.sin(progress * Math.PI) * 2.1
+      const attacking = now < entity.attackUntil
+      if (entity.visual.kind === 'procedural') {
+        const { leftLeg, rightLeg, leftArm, rightArm } = entity.visual.view
+        const swingSpeed = running ? 0.019 : 0.012
+        const swingAmplitude = running ? 0.8 : 0.55
+        const swing = moving ? Math.sin(now * swingSpeed) * swingAmplitude : 0
+        leftLeg.rotation.x = swing
+        rightLeg.rotation.x = -swing
+        leftArm.rotation.x = -swing * 0.7
+        if (attacking) {
+          const progress = 1 - (entity.attackUntil - now) / ATTACK_ANIM_MILLIS
+          rightArm.rotation.x = -Math.sin(progress * Math.PI) * 2.1
+        } else {
+          rightArm.rotation.x = swing * 0.7
+        }
+        if (!moving) {
+          group.position.y += Math.sin(now * 0.0022) * 0.012 + 0.012
+        }
+        group.rotation.x = moving && running ? -0.07 : 0
       } else {
-        rightArm.rotation.x = swing * 0.7
+        this.updateGltfClip(entity.visual, { moving, running, attacking })
+        entity.visual.mixer.update(deltaSeconds)
+        entity.visual.attachments.forEach((attachment) => attachment.mixer.update(deltaSeconds))
       }
-      if (!moving) {
-        group.position.y += Math.sin(now * 0.0022) * 0.012 + 0.012
-      }
-      group.rotation.x = moving && running ? -0.07 : 0
       const yawDelta = entity.targetYaw - group.rotation.y
       const wrapped = Math.atan2(Math.sin(yawDelta), Math.cos(yawDelta))
       group.rotation.y += wrapped * 0.2
     })
   }
 
+  private updateGltfClip(
+    visual: Extract<EntityVisual, { kind: 'gltf' }>,
+    motion: { moving: boolean; running: boolean; attacking: boolean },
+  ) {
+    const desired = resolveClip(Object.keys(visual.actions), clipFor(motion))
+    if (desired === null || desired === visual.current) return
+    if (!visual.actions[desired]) return
+    const previous = visual.current
+    const parts: AnimatedPart[] = [visual, ...visual.attachments.values()]
+    parts.forEach((part) => {
+      if (previous) part.actions[previous]?.fadeOut(CROSSFADE_SECONDS)
+      part.actions[desired]?.reset().fadeIn(CROSSFADE_SECONDS).play()
+    })
+    visual.current = desired
+  }
+
   private updateCamera() {
     const self = this.selfId ? this.entities.get(this.selfId) : undefined
     const target = self
-      ? self.view.group.position.clone()
+      ? self.group.position.clone()
       : new THREE.Vector3(GAME_MAP.spawnPoint.x, 0, GAME_MAP.spawnPoint.z)
     target.y += 1
     const offset = new THREE.Vector3(
@@ -623,7 +793,10 @@ export class GameScene {
   private readonly loop = () => {
     if (this.disposed) return
     const now = performance.now()
-    this.animateEntities(now)
+    const deltaSeconds = Math.min(0.1, (now - this.lastFrameAt) / 1000)
+    this.lastFrameAt = now
+    this.animateEntities(now, deltaSeconds)
+    this.ambientMixers.forEach((mixer) => mixer.update(deltaSeconds))
     this.animateAmbience(now)
     this.updateCamera()
     this.updateOverlays(Date.now())

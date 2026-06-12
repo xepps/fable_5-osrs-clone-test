@@ -20,6 +20,15 @@ export type LoginResult =
     }>
   | Readonly<{ kind: 'reject'; reason: string }>
 
+export const validateSaves = (
+  saves: readonly Readonly<{ characterId: string; save: string }>[],
+  decryptFor: (characterId: string, save: string) => PersistentPlayer | null,
+): readonly Readonly<{ characterId: string; valid: boolean }>[] =>
+  saves.map(({ characterId, save }) => ({
+    characterId,
+    valid: decryptFor(characterId, save) !== null,
+  }))
+
 export const loginFor = (hello: HelloMessage, deps: LoginDeps): LoginResult => {
   if (deps.activeCharacterIds.includes(hello.characterId)) {
     return { kind: 'reject', reason: 'That character is already logged in.' }

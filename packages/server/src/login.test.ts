@@ -39,6 +39,23 @@ const hello = (save: string | null, name = 'Bob') => ({
   save,
 })
 
+describe('validating stored saves', () => {
+  it('marks saves valid only when they decrypt', async () => {
+    const { validateSaves } = await import('./login')
+    const results = validateSaves(
+      [
+        { characterId: 'aaaaaaaa-1111-4222-8333-444455556666', save: 'good==' },
+        { characterId: 'bbbbbbbb-1111-4222-8333-444455556666', save: 'bad==' },
+      ],
+      (_, save) => (save === 'good==' ? savedPlayer() : null),
+    )
+    expect(results).toEqual([
+      { characterId: 'aaaaaaaa-1111-4222-8333-444455556666', valid: true },
+      { characterId: 'bbbbbbbb-1111-4222-8333-444455556666', valid: false },
+    ])
+  })
+})
+
 describe('logging in', () => {
   it('accepts a brand new character with the requested name and no restore', () => {
     const result = loginFor(hello(null), deps())

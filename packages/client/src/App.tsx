@@ -1,12 +1,13 @@
-import { useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   createCharacter,
   getSaveBlob,
   listCharacters,
+  removeCharacter,
   setSaveBlob,
   touchCharacter,
 } from './game/characters'
-import { connect, type Connection } from './game/connection'
+import { connect, validateStoredSaves, type Connection } from './game/connection'
 import { GameView } from './GameView'
 import { createStore, type Store } from './store/store'
 import { HomeScreen } from './ui/HomeScreen'
@@ -21,6 +22,25 @@ export const App = () => {
   const state = useSyncExternalStore(store.subscribe, store.getState)
   const [characters, setCharacters] = useState(() => listCharacters(localStorage))
 
+  useEffect(() => {
+    const stored = listCharacters(localStorage).flatMap((character) => {
+      const save = getSaveBlob(localStorage, character.id)
+      return save === null ? [] : [{ characterId: character.id, save }]
+    })
+    if (stored.length === 0) return
+    let cancelled = false
+    validateStoredSaves(SERVER_URL, stored).then((results) => {
+      if (cancelled || !results) return
+      const invalid = results.filter((result) => !result.valid)
+      if (invalid.length === 0) return
+      invalid.forEach((result) => removeCharacter(localStorage, result.characterId))
+      setCharacters(listCharacters(localStorage))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const login = (login: { name: string; characterId: string; save: string | null }) => {
     connectionRef.current?.close()
     connectionRef.current = connect(SERVER_URL, login, (message) => {
@@ -34,6 +54,7 @@ export const App = () => {
         connectionRef.current?.close()
         return
       }
+      if (message.type === 'savesValidated') return
       setSaveBlob(localStorage, login.characterId, message.save)
       store.dispatch({ type: 'snapshotReceived', snapshot: message, now: Date.now() })
     })

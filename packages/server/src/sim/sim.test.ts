@@ -490,6 +490,32 @@ describe('combat', () => {
   })
 })
 
+describe('npc leashing', () => {
+  it('walks back home after losing a target far from camp', () => {
+    const game = harness()
+    game.step([join('p1', 'Bob')])
+    game.step([msg('p1', { type: 'setRun', enabled: true })])
+    game.step([msg('p1', { type: 'attackNpc', npcId: 'npc_goblin_0' })])
+    game.stepN(14)
+    game.step([msg('p1', { type: 'moveTo', x: SPAWN.x + 20, z: SPAWN.z })])
+    game.stepN(40)
+    const goblin = game.world.npcs['npc_goblin_0']!
+    const draggedDistance = Math.max(
+      Math.abs(goblin.position.x - goblin.home.x),
+      Math.abs(goblin.position.z - goblin.home.z),
+    )
+    expect(draggedDistance).toBeGreaterThan(goblin.wanderRadius)
+    game.step([{ kind: 'leave', playerId: 'p1' }])
+    game.stepN(80)
+    const returned = game.world.npcs['npc_goblin_0']!
+    const distanceHome = Math.max(
+      Math.abs(returned.position.x - returned.home.x),
+      Math.abs(returned.position.z - returned.home.z),
+    )
+    expect(distanceHome).toBeLessThanOrEqual(returned.wanderRadius)
+  })
+})
+
 describe('combat animations', () => {
   it('flags attackers with an attack animation only on the tick a blow lands', () => {
     const game = harness()

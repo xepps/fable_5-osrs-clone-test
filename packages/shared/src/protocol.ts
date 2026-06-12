@@ -50,6 +50,10 @@ export const clientMessageSchema = z.discriminatedUnion('type', [
     amount: z.union([z.number().int().positive(), z.literal('all')]),
   }),
   z.object({ type: z.literal('closeInterface') }),
+  z.object({
+    type: z.literal('validateSaves'),
+    saves: z.array(z.object({ characterId: z.string().uuid(), save: z.string() })).max(50),
+  }),
   z.object({ type: z.literal('openShop'), npcId: z.string() }),
   z.object({
     type: z.literal('buyItem'),
@@ -156,6 +160,10 @@ const privateState = z.object({
 export const serverMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('welcome'), playerId: z.string(), name: z.string() }),
   z.object({ type: z.literal('loginRejected'), reason: z.string() }),
+  z.object({
+    type: z.literal('savesValidated'),
+    results: z.array(z.object({ characterId: z.string().uuid(), valid: z.boolean() })),
+  }),
   z.object({
     type: z.literal('snapshot'),
     tick: z.number().int().min(0),
