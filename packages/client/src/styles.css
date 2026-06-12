@@ -134,10 +134,86 @@ body,
 
 .side-panel {
   position: absolute;
-  top: 10px;
+  top: 188px;
   right: 10px;
   width: 224px;
   padding: 8px;
+}
+
+.hud-corner {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  z-index: 5;
+}
+
+.minimap-frame {
+  position: relative;
+  width: 168px;
+  height: 168px;
+  padding: 8px;
+  background: linear-gradient(#4e4434, #3a3226);
+  border: 2px solid #1f1a12;
+  outline: 1px solid #6d5f48;
+  border-radius: 50%;
+}
+
+.minimap-frame canvas {
+  display: block;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.minimap-compass {
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1f1a12;
+  border: 1px solid #6d5f48;
+  border-radius: 50%;
+  color: #ffb83f;
+  font-size: 12px;
+  font-weight: bold;
+  pointer-events: none;
+}
+
+.run-orb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  background: linear-gradient(#4e4434, #3a3226);
+  border: 2px solid #1f1a12;
+  outline: 1px solid #6d5f48;
+  border-radius: 50%;
+  color: #ffb83f;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.run-orb-active {
+  outline-color: #ffd900;
+  color: #ffd900;
+  box-shadow: 0 0 8px #ffd90066;
+}
+
+.run-orb-icon {
+  font-size: 16px;
+}
+
+.run-orb-energy {
+  font-size: 12px;
+  font-weight: bold;
 }
 
 .hp-orb {
@@ -251,6 +327,44 @@ body,
   height: 40%;
 }
 
+.item-small_fishing_net .item-glyph {
+  background:
+    repeating-linear-gradient(0deg, transparent 0 3px, #b8ad8d 3px 4px),
+    repeating-linear-gradient(90deg, transparent 0 3px, #b8ad8d 3px 4px);
+  border: 1px solid #8d8264;
+  border-radius: 20% 20% 50% 50%;
+}
+
+.item-raw_shrimps .item-glyph {
+  background: radial-gradient(circle at 35% 35%, #e8c0c0, #c98f8f);
+  border-radius: 60% 40% 60% 40%;
+  height: 45%;
+}
+
+.item-shrimps .item-glyph {
+  background: radial-gradient(circle at 35% 35%, #f0a070, #d06a3a);
+  border-radius: 60% 40% 60% 40%;
+  height: 45%;
+}
+
+.item-raw_beef .item-glyph {
+  background: linear-gradient(135deg, #d98080, #a84848);
+  border-radius: 40%;
+  height: 50%;
+}
+
+.item-cooked_meat .item-glyph {
+  background: linear-gradient(135deg, #a8663f, #6e4226);
+  border-radius: 40%;
+  height: 50%;
+}
+
+.item-burnt_fish .item-glyph {
+  background: linear-gradient(135deg, #4a4a4a, #2a2a2a);
+  border-radius: 60% 40% 60% 40%;
+  height: 45%;
+}
+
 .item-quantity {
   position: absolute;
   top: 1px;
@@ -349,6 +463,72 @@ body,
   color: #fff;
   font-size: 13px;
   padding: 6px 8px;
+}
+
+.bank-panel {
+  position: absolute;
+  left: 50%;
+  top: 70px;
+  transform: translateX(-50%);
+  width: 420px;
+  max-height: 70%;
+  overflow-y: auto;
+  padding: 12px 16px;
+  z-index: 8;
+}
+
+.bank-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.bank-header h2 {
+  margin: 0;
+  font-size: 16px;
+  color: #ffb83f;
+  text-shadow: 1px 1px 0 #000;
+}
+
+.bank-close {
+  background: #181610;
+  border: 1px solid #6d5f48;
+  color: #ff981f;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.bank-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 40px;
+}
+
+.bank-slot {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  background: #2e2a20;
+  border: 1px solid #1f1a12;
+  cursor: pointer;
+  padding: 0;
+}
+
+.bank-empty {
+  margin: 6px 2px;
+  color: #c8b48a;
+  font-size: 13px;
+}
+
+.bank-divider {
+  margin: 10px 0 6px;
+  font-size: 12px;
+  color: #c8b48a;
+  border-top: 1px solid #6d5f48;
+  padding-top: 6px;
 }
 
 .context-menu {

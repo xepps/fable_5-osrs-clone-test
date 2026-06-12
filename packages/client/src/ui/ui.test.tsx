@@ -12,7 +12,20 @@ const youWith = (overrides: Partial<PrivateState> = {}): PrivateState => ({
   hp: 10,
   inventory: Array.from({ length: 28 }, () => null),
   equipment: { head: null, weapon: null },
-  skills: { attack: 0, strength: 0, defence: 0, hitpoints: 1154, woodcutting: 0 },
+  skills: {
+    attack: 0,
+    strength: 0,
+    defence: 0,
+    hitpoints: 1154,
+    woodcutting: 0,
+    fishing: 0,
+    cooking: 0,
+  },
+  runEnergy: 100,
+  runEnabled: false,
+  openInterface: null,
+  bank: null,
+  shop: null,
   ...overrides,
 })
 
@@ -149,7 +162,15 @@ describe('SidePanel inventory', () => {
 
   it('shows skill levels derived from xp', async () => {
     const you = youWith({
-      skills: { attack: 83, strength: 0, defence: 0, hitpoints: 1154, woodcutting: 0 },
+      skills: {
+        attack: 83,
+        strength: 0,
+        defence: 0,
+        hitpoints: 1154,
+        woodcutting: 0,
+        fishing: 0,
+        cooking: 0,
+      },
     })
     render(<SidePanel you={you} onAction={() => {}} onOpenMenu={() => {}} />)
     await page.getByRole('tab', { name: 'Skills' }).click()

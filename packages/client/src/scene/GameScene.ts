@@ -3,13 +3,18 @@ import { GAME_MAP, ITEMS, MAP_SIZE, NPCS, type ItemId, type SnapshotMessage } fr
 import type { PickTarget } from '../game/actions'
 import type { ClientState, HitsplatFx } from '../store/reducer'
 import {
+  buildBuilding,
+  buildButterfly,
+  buildCow,
   buildGroundItem,
   buildHumanoid,
+  buildSmokePuff,
   buildTerrain,
   buildTree,
+  buildWaterOverlay,
+  buildWorldObject,
   npcAppearance,
   playerAppearance,
-  WEAPON_COLORS,
   type HumanoidView,
   type TreeView,
 } from './meshes'
@@ -37,10 +42,15 @@ type EntityView = {
   visible: boolean
   hp: number
   maxHp: number
+  stepDistance: number
+  attackUntil: number
 }
 
 const TICK_MILLIS = 600
+const ATTACK_ANIM_MILLIS = 480
 const CAMERA_LIMITS = { minRadius: 6, maxRadius: 26, minPolar: 0.35, maxPolar: 1.25 }
+const SUN_OFFSET = new THREE.Vector3(8, 60, -12)
+const GROUND_PLANE = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
 
 const overheadLabel = (parent: HTMLElement, className: string): HTMLDivElement => {
   const element = document.createElement('div')
@@ -58,7 +68,16 @@ export class GameScene {
   private readonly container: HTMLElement
   private readonly overlay: HTMLDivElement
   private readonly terrain: THREE.Mesh
+  private readonly sun: THREE.DirectionalLight
+  private readonly water: THREE.Mesh
+  private readonly smokePuffs: Array<{ mesh: THREE.Mesh; base: THREE.Vector3; offset: number }> = []
+  private readonly butterflies: Array<{
+    group: THREE.Group
+    anchor: THREE.Vector3
+    phase: number
+  }> = []
   private readonly trees = new Map<string, TreeView>()
+  private readonly worldObjects = new Map<string, THREE.Group>()
   private readonly entities = new Map<string, EntityView>()
   private readonly groundItems = new Map<string, THREE.Mesh>()
   private readonly hitsplatElements = new Map<string, HTMLDivElement>()
@@ -88,34 +107,76 @@ export class GameScene {
 
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200)
     this.scene.background = new THREE.Color('#87b3d6')
-    this.scene.fog = new THREE.Fog('#87b3d6', 40, 90)
+    this.scene.fog = new THREE.Fog('#87b3d6', 45, 100)
 
-    const hemisphere = new THREE.HemisphereLight('#cfe5ff', '#4a5a36', 0.9)
-    const sun = new THREE.DirectionalLight('#fff3d6', 1.6)
-    sun.position.set(40, 60, 20)
-    sun.castShadow = true
-    sun.shadow.camera.left = -40
-    sun.shadow.camera.right = 40
-    sun.shadow.camera.top = 40
-    sun.shadow.camera.bottom = -40
-    sun.shadow.mapSize.set(2048, 2048)
-    sun.target.position.set(32, 0, 32)
-    this.scene.add(hemisphere, sun, sun.target)
+    const hemisphere = new THREE.HemisphereLight('#cfe5ff', '#54603c', 0.95)
+    this.sun = new THREE.DirectionalLight('#ffeec2', 1.6)
+    this.sun.castShadow = true
+    this.sun.shadow.camera.left = -40
+    this.sun.shadow.camera.right = 40
+    this.sun.shadow.camera.top = 40
+    this.sun.shadow.camera.bottom = -40
+    this.sun.shadow.mapSize.set(2048, 2048)
+    this.scene.add(hemisphere, this.sun, this.sun.target)
 
     this.terrain = buildTerrain()
     this.scene.add(this.terrain)
 
+    GAME_MAP.buildings.forEach((building) => this.scene.add(buildBuilding(building)))
+
+    this.water = buildWaterOverlay()
+    this.scene.add(this.water)
+
+    GAME_MAP.buildings.forEach((building) => {
+      if (!building.chimney) return
+      const base = new THREE.Vector3(building.chimney.x + 0.5, 3.35, building.chimney.z + 0.5)
+      for (let puffIndex = 0; puffIndex < 3; puffIndex += 1) {
+        const mesh = buildSmokePuff()
+        this.scene.add(mesh)
+        this.smokePuffs.push({ mesh, base, offset: puffIndex / 3 })
+      }
+    })
+
+    const butterflyColors = ['#f3e9c0', '#e8a8c8', '#c0d8f3']
+    butterflyColors.forEach((color, index) => {
+      const group = buildButterfly(color)
+      this.scene.add(group)
+      this.butterflies.push({
+        group,
+        anchor: new THREE.Vector3(
+          GAME_MAP.spawnPoint.x + (index - 1) * 9 + 3,
+          0,
+          GAME_MAP.spawnPoint.z + (index - 1) * 6 - 4,
+        ),
+        phase: index * 2.1,
+      })
+    })
+
     GAME_MAP.objects.forEach((object) => {
-      const tree = buildTree()
-      tree.group.position.set(object.x + 0.5, 0, object.z + 0.5)
-      tree.group.userData['pickTarget'] = {
-        kind: 'tree',
+      if (object.kind === 'tree') {
+        const tree = buildTree(object.x * 31 + object.z)
+        tree.group.position.set(object.x + 0.5, 0, object.z + 0.5)
+        tree.group.userData['pickTarget'] = {
+          kind: 'tree',
+          objectId: object.id,
+          name: object.name,
+          examine: object.examine,
+        } satisfies PickTarget
+        this.trees.set(object.id, tree)
+        this.scene.add(tree.group)
+        return
+      }
+      const view = buildWorldObject(object.kind)
+      view.position.set(object.x + 0.5, 0, object.z + 0.5)
+      view.userData['pickTarget'] = {
+        kind: 'object',
         objectId: object.id,
+        objectKind: object.kind,
         name: object.name,
         examine: object.examine,
       } satisfies PickTarget
-      this.trees.set(object.id, tree)
-      this.scene.add(tree.group)
+      this.worldObjects.set(object.id, view)
+      this.scene.add(view)
     })
 
     this.marker = this.buildMarker()
@@ -240,8 +301,9 @@ export class GameScene {
       -((event.clientY - rect.top) / rect.height) * 2 + 1,
     )
     this.raycaster.setFromCamera(ndc, this.camera)
-    const pickables: THREE.Object3D[] = [this.terrain]
+    const pickables: THREE.Object3D[] = []
     this.trees.forEach((tree) => pickables.push(tree.group))
+    this.worldObjects.forEach((object) => pickables.push(object))
     this.entities.forEach((entity) => {
       if (entity.visible) pickables.push(entity.view.group)
     })
@@ -249,7 +311,6 @@ export class GameScene {
     const intersections = this.raycaster.intersectObjects(pickables, true)
     const targets: PickTarget[] = []
     const seen = new Set<unknown>()
-    let tile: { x: number; z: number } | null = null
     intersections.forEach((intersection) => {
       let object: THREE.Object3D | null = intersection.object
       while (object && object.userData['pickTarget'] === undefined) object = object.parent
@@ -258,12 +319,14 @@ export class GameScene {
         seen.add(object)
         targets.push(target)
       }
-      if (intersection.object === this.terrain && tile === null) {
-        const x = Math.floor(intersection.point.x)
-        const z = Math.floor(intersection.point.z)
-        if (x >= 0 && x < MAP_SIZE && z >= 0 && z < MAP_SIZE) tile = { x, z }
-      }
     })
+    const groundPoint = this.raycaster.ray.intersectPlane(GROUND_PLANE, new THREE.Vector3())
+    let tile: { x: number; z: number } | null = null
+    if (groundPoint) {
+      const x = Math.floor(groundPoint.x)
+      const z = Math.floor(groundPoint.z)
+      if (x >= 0 && x < MAP_SIZE && z >= 0 && z < MAP_SIZE) tile = { x, z }
+    }
     return { targets, tile, screenX: event.clientX, screenY: event.clientY }
   }
 
@@ -293,6 +356,8 @@ export class GameScene {
       visible: true,
       hp: 1,
       maxHp: 1,
+      stepDistance: 0,
+      attackUntil: 0,
     }
     entity.labels.hpFill.className = 'hp-fill'
     entity.labels.hpBar.appendChild(entity.labels.hpFill)
@@ -320,6 +385,7 @@ export class GameScene {
       entity.from.copy(entity.view.group.position)
       entity.to.copy(target)
       entity.moveStartedAt = performance.now()
+      entity.stepDistance = entity.from.distanceTo(entity.to)
     }
     if (facing.dx !== 0 || facing.dz !== 0) {
       entity.targetYaw = Math.atan2(facing.dx, facing.dz)
@@ -342,11 +408,12 @@ export class GameScene {
       entity.hp = player.hp
       entity.maxHp = player.maxHp
       entity.view.helmet.visible = player.equipment.head !== null
+      entity.view.hair.visible = player.equipment.head === null
       entity.view.weapon.visible = player.equipment.weapon !== null
-      if (player.equipment.weapon) {
-        ;(entity.view.weapon.material as THREE.MeshLambertMaterial).color.set(
-          WEAPON_COLORS[player.equipment.weapon] ?? '#cfcfcf',
-        )
+      entity.view.axe.visible = player.equipment.weapon === 'bronze_axe'
+      entity.view.sword.visible = player.equipment.weapon !== 'bronze_axe'
+      if (player.anim === 'attack') {
+        entity.attackUntil = performance.now() + ATTACK_ANIM_MILLIS
       }
       entity.labels.overhead.textContent = player.overheadText
       entity.labels.overhead.style.display = player.overheadText ? 'block' : 'none'
@@ -355,8 +422,8 @@ export class GameScene {
       const def = NPCS[npc.defId]
       const entity = this.ensureEntity(
         npc.id,
-        () => buildHumanoid(npcAppearance(npc.defId)),
-        npc.defId === 'goblin' ? 1.3 : 1.55,
+        () => (npc.defId === 'cow' ? buildCow() : buildHumanoid(npcAppearance(npc.defId))),
+        npc.defId === 'goblin' ? 1.3 : npc.defId === 'cow' ? 1.2 : 1.55,
         {
           kind: 'npc',
           id: npc.id,
@@ -370,6 +437,9 @@ export class GameScene {
       entity.view.group.visible = !npc.dead
       entity.hp = npc.hp
       entity.maxHp = npc.maxHp
+      if (npc.anim === 'attack') {
+        entity.attackUntil = performance.now() + ATTACK_ANIM_MILLIS
+      }
       if (!npc.dead) this.moveEntity(entity, npc.x, npc.z, npc.facing)
       entity.labels.overhead.style.display = 'none'
     })
@@ -483,11 +553,23 @@ export class GameScene {
       const t = Math.min(1, (now - entity.moveStartedAt) / TICK_MILLIS)
       group.position.lerpVectors(entity.from, entity.to, t)
       const moving = t < 1 && !entity.from.equals(entity.to)
-      const swing = moving ? Math.sin(now * 0.012) * 0.55 : 0
+      const running = entity.stepDistance > 1.5
+      const swingSpeed = running ? 0.019 : 0.012
+      const swingAmplitude = running ? 0.8 : 0.55
+      const swing = moving ? Math.sin(now * swingSpeed) * swingAmplitude : 0
       leftLeg.rotation.x = swing
       rightLeg.rotation.x = -swing
       leftArm.rotation.x = -swing * 0.7
-      rightArm.rotation.x = swing * 0.7
+      if (now < entity.attackUntil) {
+        const progress = 1 - (entity.attackUntil - now) / ATTACK_ANIM_MILLIS
+        rightArm.rotation.x = -Math.sin(progress * Math.PI) * 2.1
+      } else {
+        rightArm.rotation.x = swing * 0.7
+      }
+      if (!moving) {
+        group.position.y += Math.sin(now * 0.0022) * 0.012 + 0.012
+      }
+      group.rotation.x = moving && running ? -0.07 : 0
       const yawDelta = entity.targetYaw - group.rotation.y
       const wrapped = Math.atan2(Math.sin(yawDelta), Math.cos(yawDelta))
       group.rotation.y += wrapped * 0.2
@@ -496,7 +578,9 @@ export class GameScene {
 
   private updateCamera() {
     const self = this.selfId ? this.entities.get(this.selfId) : undefined
-    const target = self ? self.view.group.position.clone() : new THREE.Vector3(32, 0, 32)
+    const target = self
+      ? self.view.group.position.clone()
+      : new THREE.Vector3(GAME_MAP.spawnPoint.x, 0, GAME_MAP.spawnPoint.z)
     target.y += 1
     const offset = new THREE.Vector3(
       Math.sin(this.cameraAzimuth) * Math.sin(this.cameraPolar),
@@ -505,12 +589,42 @@ export class GameScene {
     ).multiplyScalar(this.cameraRadius)
     this.camera.position.copy(target).add(offset)
     this.camera.lookAt(target)
+    this.sun.position.copy(target).add(SUN_OFFSET)
+    this.sun.target.position.copy(target)
+  }
+
+  private animateAmbience(now: number) {
+    this.water.position.y = -0.1 + Math.sin(now * 0.0012) * 0.03
+    this.smokePuffs.forEach((puff) => {
+      const cycle = (now * 0.00035 + puff.offset) % 1
+      puff.mesh.position.set(
+        puff.base.x + Math.sin((cycle + puff.offset) * 7) * 0.1,
+        puff.base.y + cycle * 1.7,
+        puff.base.z,
+      )
+      puff.mesh.scale.setScalar(0.6 + cycle * 1.2)
+      ;(puff.mesh.material as THREE.MeshLambertMaterial).opacity = 0.45 * (1 - cycle)
+    })
+    this.butterflies.forEach((butterfly) => {
+      const t = now * 0.001 + butterfly.phase
+      butterfly.group.position.set(
+        butterfly.anchor.x + Math.sin(t * 0.7) * 3,
+        0.9 + Math.sin(t * 1.7) * 0.35,
+        butterfly.anchor.z + Math.cos(t * 0.5) * 3,
+      )
+      const flap = Math.sin(now * 0.02) * 0.9
+      const leftWing = butterfly.group.children[0]
+      const rightWing = butterfly.group.children[1]
+      if (leftWing) leftWing.rotation.z = flap
+      if (rightWing) rightWing.rotation.z = -flap
+    })
   }
 
   private readonly loop = () => {
     if (this.disposed) return
     const now = performance.now()
     this.animateEntities(now)
+    this.animateAmbience(now)
     this.updateCamera()
     this.updateOverlays(Date.now())
     if (this.marker.visible) {

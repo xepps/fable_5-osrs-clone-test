@@ -3,9 +3,13 @@ import type { ClientMessage } from '@osrs/shared'
 import { menuOptionsFor, type GameAction } from './game/actions'
 import { GameScene } from './scene/GameScene'
 import type { Store } from './store/store'
+import { BankPanel } from './ui/BankPanel'
 import { ChatPanel } from './ui/ChatPanel'
 import { ContextMenu } from './ui/ContextMenu'
 import { DialogueBox } from './ui/DialogueBox'
+import { Minimap } from './ui/Minimap'
+import { RunOrb } from './ui/RunOrb'
+import { ShopPanel } from './ui/ShopPanel'
 import { SidePanel } from './ui/SidePanel'
 
 type Props = Readonly<{
@@ -67,12 +71,42 @@ export const GameView = ({ store, send }: Props) => {
     <div className="game-root">
       <div className="scene-container" ref={containerRef} />
       {state.snapshot ? (
+        <div className="hud-corner">
+          <RunOrb
+            runEnergy={state.snapshot.you.runEnergy}
+            runEnabled={state.snapshot.you.runEnabled}
+            onToggle={() => send({ type: 'setRun', enabled: !state.snapshot!.you.runEnabled })}
+          />
+          <Minimap
+            snapshot={state.snapshot}
+            selfId={state.playerId}
+            onWalkTo={(x, z) => send({ type: 'moveTo', x, z })}
+          />
+        </div>
+      ) : null}
+      {state.snapshot ? (
         <SidePanel
           you={state.snapshot.you}
           onAction={(action) => executeRef.current(action)}
           onOpenMenu={(screenX, screenY, options) =>
             store.dispatch({ type: 'menuOpened', screenX, screenY, options })
           }
+        />
+      ) : null}
+      {state.snapshot?.you.openInterface === 'bank' && state.snapshot.you.bank ? (
+        <BankPanel
+          bank={state.snapshot.you.bank}
+          inventory={state.snapshot.you.inventory}
+          onSend={send}
+          onClose={() => send({ type: 'closeInterface' })}
+        />
+      ) : null}
+      {state.snapshot?.you.openInterface === 'shop' && state.snapshot.you.shop ? (
+        <ShopPanel
+          shop={state.snapshot.you.shop}
+          inventory={state.snapshot.you.inventory}
+          onSend={send}
+          onClose={() => send({ type: 'closeInterface' })}
         />
       ) : null}
       <ChatPanel lines={state.chatLog} onSend={(text) => send({ type: 'chat', text })} />

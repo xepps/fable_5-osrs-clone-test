@@ -1,10 +1,16 @@
 import {
+  burnChance,
+  buyPrice,
+  cookableFor,
   GAME_MAP,
   isWalkable,
   ITEMS,
   levelForXp,
   NPCS,
   rollDamage,
+  sellPrice,
+  SHOP_BASE_STOCK,
+  type ItemId,
   type ClientMessage,
   type CombatantStats,
   type GameEvent,
@@ -52,6 +58,8 @@ const TREE_RESPAWN_TICKS = 50
 const DROPPED_ITEM_DESPAWN_TICKS = 500
 const PLAYER_ATTACK_SPEED_TICKS = 4
 const WOODCUTTING_XP_PER_LOG = 25
+const FISHING_XP_PER_CATCH = 10
+const COOK_INTERVAL_TICKS = 3
 const NO_SPACE_MESSAGE = "You don't have enough inventory space."
 
 const SKILL_DISPLAY_NAMES: Record<Skill, string> = {
@@ -60,6 +68,8 @@ const SKILL_DISPLAY_NAMES: Record<Skill, string> = {
   defence: 'Defence',
   hitpoints: 'Hitpoints',
   woodcutting: 'Woodcutting',
+  fishing: 'Fishing',
+  cooking: 'Cooking',
 }
 
 const sign = (value: number): number => (value > 0 ? 1 : value < 0 ? -1 : 0)
@@ -162,6 +172,16 @@ const hasAxe = (player: SimPlayer): boolean =>
   player.inventory.some((stack) => stack !== null && ITEMS[stack.itemId].isAxe === true) ||
   (player.equipment.weapon !== null && ITEMS[player.equipment.weapon.itemId].isAxe === true)
 
+const hasNet = (player: SimPlayer): boolean =>
+  player.inventory.some((stack) => stack?.itemId === 'small_fishing_net')
+
+const removeOneFromSlot = (player: SimPlayer, slot: number) => {
+  const stack = player.inventory[slot]
+  if (!stack) return
+  player.inventory[slot] =
+    stack.quantity > 1 ? { itemId: stack.itemId, quantity: stack.quantity - 1 } : null
+}
+
 const clearNpcTargets = (world: SimWorld, playerId: string) => {
   Object.values(world.npcs).forEach((npc) => {
     if (npc.targetPlayerId === playerId) npc.targetPlayerId = null
@@ -207,6 +227,86 @@ const dropFromSlot = (world: SimWorld, player: SimPlayer, slot: number) => {
 const setAction = (player: SimPlayer, action: PlayerAction) => {
   player.action = action
   player.path = []
+  player.openInterface = null
+}
+
+const countOf = (player: SimPlayer, itemId: ItemStack['itemId']): number =>
+  player.inventory.reduce(
+    (total, stack) => total + (stack?.itemId === itemId ? stack.quantity : 0),
+    0,
+  )
+
+const removeFromInventory = (player: SimPlayer, itemId: ItemStack['itemId'], amount: number) => {
+  let remaining = amount
+  player.inventory = player.inventory.map((stack) => {
+    if (remaining === 0 || stack?.itemId !== itemId) return stack
+    const taken = Math.min(stack.quantity, remaining)
+    remaining -= taken
+    return stack.quantity > taken ? { itemId, quantity: stack.quantity - taken } : null
+  })
+}
+
+const depositToBank = (player: SimPlayer, slot: number, amount: number | 'all') => {
+  if (player.openInterface !== 'bank') return
+  const stack = player.inventory[slot]
+  if (!stack) return
+  const available = countOf(player, stack.itemId)
+  const toDeposit = amount === 'all' ? available : Math.min(amount, available)
+  if (toDeposit <= 0) return
+  removeFromInventory(player, stack.itemId, toDeposit)
+  const existing = player.bank.find((entry) => entry.itemId === stack.itemId)
+  player.bank = existing
+    ? player.bank.map((entry) =>
+        entry.itemId === stack.itemId
+          ? { itemId: entry.itemId, quantity: entry.quantity + toDeposit }
+          : entry,
+      )
+    : [...player.bank, { itemId: stack.itemId, quantity: toDeposit }]
+}
+
+const withdrawFromBank = (
+  events: AddressedEvent[],
+  player: SimPlayer,
+  bankIndex: number,
+  amount: number | 'all',
+) => {
+  if (player.openInterface !== 'bank') return
+  const entry = player.bank[bankIndex]
+  if (!entry) return
+  const requested = amount === 'all' ? entry.quantity : Math.min(amount, entry.quantity)
+  let withdrawn = 0
+  if (ITEMS[entry.itemId].stackable) {
+    if (addToInventory(player, { itemId: entry.itemId, quantity: requested })) {
+      withdrawn = requested
+    }
+  } else {
+    while (withdrawn < requested && addToInventory(player, { itemId: entry.itemId, quantity: 1 })) {
+      withdrawn += 1
+    }
+  }
+  if (withdrawn < requested) sendMessage(events, player.id, NO_SPACE_MESSAGE)
+  if (withdrawn === 0) return
+  player.bank =
+    entry.quantity > withdrawn
+      ? player.bank.map((candidate, index) =>
+          index === bankIndex
+            ? { itemId: candidate.itemId, quantity: candidate.quantity - withdrawn }
+            : candidate,
+        )
+      : player.bank.filter((_, index) => index !== bankIndex)
+}
+
+const eatFromSlot = (events: AddressedEvent[], player: SimPlayer, slot: number) => {
+  const stack = player.inventory[slot]
+  if (!stack) return
+  const def = ITEMS[stack.itemId]
+  if (def.heals === undefined) {
+    sendMessage(events, player.id, "You can't eat that.")
+    return
+  }
+  removeOneFromSlot(player, slot)
+  player.hp = Math.min(maxHpOf(player), player.hp + def.heals)
+  sendMessage(events, player.id, `You eat the ${def.name.toLowerCase()}.`)
 }
 
 const applyIntent = (world: SimWorld, events: AddressedEvent[], intent: SimIntent) => {
@@ -227,6 +327,7 @@ const applyIntent = (world: SimWorld, events: AddressedEvent[], intent: SimInten
       return
     case 'moveTo':
       player.action = null
+      player.openInterface = null
       player.path = findPath(player.position, { x: message.x, z: message.z }, isWalkable)
       return
     case 'takeItem':
@@ -241,6 +342,36 @@ const applyIntent = (world: SimWorld, events: AddressedEvent[], intent: SimInten
     case 'chopTree':
       setAction(player, { kind: 'chop', objectId: message.objectId })
       return
+    case 'fish':
+      setAction(player, { kind: 'fish', objectId: message.objectId })
+      return
+    case 'cook':
+      setAction(player, { kind: 'cook', objectId: message.objectId, readyAtTick: null })
+      return
+    case 'eatItem':
+      eatFromSlot(events, player, message.slot)
+      return
+    case 'openBank':
+      setAction(player, { kind: 'openBank', objectId: message.objectId })
+      return
+    case 'depositItem':
+      depositToBank(player, message.slot, message.amount)
+      return
+    case 'withdrawItem':
+      withdrawFromBank(events, player, message.bankIndex, message.amount)
+      return
+    case 'closeInterface':
+      player.openInterface = null
+      return
+    case 'openShop':
+      setAction(player, { kind: 'openShop', npcId: message.npcId })
+      return
+    case 'buyItem':
+      buyFromShop(world, events, player, message.itemId, message.amount)
+      return
+    case 'sellItem':
+      sellToShop(world, events, player, message.slot, message.amount)
+      return
     case 'equipItem':
       equipFromSlot(events, player, message.slot)
       return
@@ -249,6 +380,9 @@ const applyIntent = (world: SimWorld, events: AddressedEvent[], intent: SimInten
       return
     case 'dropItem':
       dropFromSlot(world, player, message.slot)
+      return
+    case 'setRun':
+      player.runEnabled = message.enabled && player.runEnergy > 0
       return
     case 'chat':
       player.overhead = { text: message.text, expiresTick: world.tick + CHAT_OVERHEAD_TICKS }
@@ -283,6 +417,7 @@ const npcAttacks = (
   target.hp = Math.max(0, target.hp - damage)
   emit(events, 'all', { kind: 'hitsplat', targetKind: 'player', targetId: target.id, damage })
   npc.attackCooldown = def.combat?.attackSpeedTicks ?? 4
+  npc.lastAttackTick = world.tick
   if (target.hp === 0) respawnPlayer(world, events, target)
 }
 
@@ -327,12 +462,24 @@ const npcTurn = (world: SimWorld, events: AddressedEvent[], npc: SimNpc, rng: Si
   stepNpc(npc, path[0]!)
 }
 
+const MAX_RUN_ENERGY = 100
+
 const stepPlayer = (player: SimPlayer) => {
-  const next = player.path[0]
-  if (!next) return
-  faceTowards(player, player.position, next)
-  player.position = next
-  player.path = player.path.slice(1)
+  const limit = player.runEnabled && player.runEnergy > 0 ? 2 : 1
+  for (let step = 0; step < limit; step += 1) {
+    const next = player.path[0]
+    if (!next) return
+    faceTowards(player, player.position, next)
+    player.position = next
+    player.path = player.path.slice(1)
+    if (player.runEnabled) {
+      player.runEnergy -= 1
+      if (player.runEnergy === 0) {
+        player.runEnabled = false
+        return
+      }
+    }
+  }
 }
 
 const abandonAction = (events: AddressedEvent[], player: SimPlayer, text?: string) => {
@@ -465,6 +612,7 @@ const resolveAttack = (
   npc.targetPlayerId = player.id
   emit(events, 'all', { kind: 'hitsplat', targetKind: 'npc', targetId: npc.id, damage })
   player.attackCooldown = PLAYER_ATTACK_SPEED_TICKS
+  player.lastAttackTick = world.tick
   awardXp(events, player, 'attack', 2 * damage)
   awardXp(events, player, 'strength', 2 * damage)
   awardXp(events, player, 'hitpoints', 1.33 * damage)
@@ -473,6 +621,198 @@ const resolveAttack = (
 
 const chopSuccessChance = (woodcuttingLevel: number): number =>
   Math.min(0.95, 0.3 + woodcuttingLevel * 0.007)
+
+const fishSuccessChance = (fishingLevel: number): number =>
+  Math.min(0.95, 0.3 + fishingLevel * 0.007)
+
+const resolveFish = (
+  events: AddressedEvent[],
+  player: SimPlayer,
+  action: Extract<PlayerAction, { kind: 'fish' }>,
+  rng: SimRng,
+) => {
+  const spot = GAME_MAP.objects.find(
+    (object) => object.id === action.objectId && object.kind === 'fishing_spot',
+  )
+  if (!spot) {
+    abandonAction(events, player)
+    return
+  }
+  if (!cardinallyAdjacent(player.position, spot)) {
+    approach(events, player, spot)
+    return
+  }
+  faceTowards(player, player.position, spot)
+  if (!hasNet(player)) {
+    abandonAction(events, player, 'You need a small fishing net to catch these fish.')
+    return
+  }
+  if (rng.skill() >= fishSuccessChance(levelForXp(player.skills.fishing))) return
+  if (!addToInventory(player, { itemId: 'raw_shrimps', quantity: 1 })) {
+    abandonAction(events, player, NO_SPACE_MESSAGE)
+    return
+  }
+  sendMessage(events, player.id, 'You catch some shrimps.')
+  awardXp(events, player, 'fishing', FISHING_XP_PER_CATCH)
+}
+
+const buyFromShop = (
+  world: SimWorld,
+  events: AddressedEvent[],
+  player: SimPlayer,
+  itemId: ItemId,
+  amount: number,
+) => {
+  if (player.openInterface !== 'shop') return
+  for (let bought = 0; bought < amount; bought += 1) {
+    const stock = world.shopStock[itemId] ?? 0
+    if (stock <= 0) {
+      sendMessage(events, player.id, 'The shop has run out of stock.')
+      return
+    }
+    const price = buyPrice(itemId)
+    if (countOf(player, 'coins') < price) {
+      sendMessage(events, player.id, "You don't have enough coins.")
+      return
+    }
+    const coinSlot = player.inventory.findIndex((stack) => stack?.itemId === 'coins')
+    removeFromInventory(player, 'coins', price)
+    if (!addToInventory(player, { itemId, quantity: 1 })) {
+      if (coinSlot !== -1) addToInventory(player, { itemId: 'coins', quantity: price })
+      sendMessage(events, player.id, NO_SPACE_MESSAGE)
+      return
+    }
+    world.shopStock[itemId] = stock - 1
+  }
+}
+
+const sellToShop = (
+  world: SimWorld,
+  events: AddressedEvent[],
+  player: SimPlayer,
+  slot: number,
+  amount: number | 'all',
+) => {
+  if (player.openInterface !== 'shop') return
+  const stack = player.inventory[slot]
+  if (!stack) return
+  if (stack.itemId === 'coins') {
+    sendMessage(events, player.id, "You can't sell that.")
+    return
+  }
+  const available = countOf(player, stack.itemId)
+  const toSell = amount === 'all' ? available : Math.min(amount, available)
+  if (toSell <= 0) return
+  removeFromInventory(player, stack.itemId, toSell)
+  addToInventory(player, { itemId: 'coins', quantity: sellPrice(stack.itemId) * toSell })
+  world.shopStock[stack.itemId] = (world.shopStock[stack.itemId] ?? 0) + toSell
+}
+
+const SHOP_RESTOCK_INTERVAL_TICKS = 25
+
+const regenerateShopStock = (world: SimWorld) => {
+  if (world.tick % SHOP_RESTOCK_INTERVAL_TICKS !== 0) return
+  const itemIds = Object.keys(world.shopStock) as ItemId[]
+  itemIds.forEach((itemId) => {
+    const baseline = SHOP_BASE_STOCK[itemId] ?? 0
+    const current = world.shopStock[itemId] ?? 0
+    if (current === baseline) return
+    const next = current < baseline ? current + 1 : current - 1
+    if (next === 0 && baseline === 0) {
+      delete world.shopStock[itemId]
+      return
+    }
+    world.shopStock[itemId] = next
+  })
+}
+
+const resolveOpenShop = (
+  world: SimWorld,
+  events: AddressedEvent[],
+  player: SimPlayer,
+  action: Extract<PlayerAction, { kind: 'openShop' }>,
+) => {
+  const npc = world.npcs[action.npcId]
+  if (!npc || npc.respawnAtTick !== null || NPCS[npc.defId].shop !== true) {
+    abandonAction(events, player)
+    return
+  }
+  if (!cardinallyAdjacent(player.position, npc.position)) {
+    approach(events, player, npc.position)
+    return
+  }
+  faceTowards(player, player.position, npc.position)
+  faceTowards(npc, npc.position, player.position)
+  player.openInterface = 'shop'
+  player.action = null
+}
+
+const resolveOpenBank = (
+  events: AddressedEvent[],
+  player: SimPlayer,
+  action: Extract<PlayerAction, { kind: 'openBank' }>,
+) => {
+  const booth = GAME_MAP.objects.find(
+    (object) => object.id === action.objectId && object.kind === 'bank_booth',
+  )
+  if (!booth) {
+    abandonAction(events, player)
+    return
+  }
+  if (!cardinallyAdjacent(player.position, booth)) {
+    approach(events, player, booth)
+    return
+  }
+  faceTowards(player, player.position, booth)
+  player.openInterface = 'bank'
+  player.action = null
+}
+
+const resolveCook = (
+  world: SimWorld,
+  events: AddressedEvent[],
+  player: SimPlayer,
+  action: Extract<PlayerAction, { kind: 'cook' }>,
+  rng: SimRng,
+) => {
+  const station = GAME_MAP.objects.find(
+    (object) =>
+      object.id === action.objectId && (object.kind === 'range' || object.kind === 'campfire'),
+  )
+  if (!station) {
+    abandonAction(events, player)
+    return
+  }
+  if (!cardinallyAdjacent(player.position, station)) {
+    approach(events, player, station)
+    return
+  }
+  faceTowards(player, player.position, station)
+  const rawSlot = player.inventory.findIndex(
+    (stack) => stack !== null && cookableFor(stack.itemId) !== undefined,
+  )
+  if (rawSlot === -1) {
+    abandonAction(
+      events,
+      player,
+      action.readyAtTick === null ? 'You have nothing to cook.' : undefined,
+    )
+    return
+  }
+  if (action.readyAtTick === null || world.tick < action.readyAtTick) {
+    if (action.readyAtTick === null) {
+      player.action = { ...action, readyAtTick: world.tick + COOK_INTERVAL_TICKS }
+    }
+    return
+  }
+  const cookable = cookableFor(player.inventory[rawSlot]!.itemId)!
+  removeOneFromSlot(player, rawSlot)
+  const burned = rng.skill() < burnChance(levelForXp(player.skills.cooking), cookable)
+  addToInventory(player, { itemId: burned ? cookable.burnt : cookable.cooked, quantity: 1 })
+  sendMessage(events, player.id, burned ? cookable.burnMessage : cookable.successMessage)
+  if (!burned) awardXp(events, player, 'cooking', cookable.xp)
+  player.action = { ...action, readyAtTick: world.tick + COOK_INTERVAL_TICKS }
+}
 
 const resolveChop = (
   world: SimWorld,
@@ -512,6 +852,13 @@ const resolveChop = (
 
 const playerTurn = (world: SimWorld, events: AddressedEvent[], player: SimPlayer, rng: SimRng) => {
   player.attackCooldown = Math.max(0, player.attackCooldown - 1)
+  const energyBefore = player.runEnergy
+  takeTurn(world, events, player, rng)
+  const ranThisTick = player.runEnergy < energyBefore
+  if (!ranThisTick) player.runEnergy = Math.min(MAX_RUN_ENERGY, player.runEnergy + 1)
+}
+
+const takeTurn = (world: SimWorld, events: AddressedEvent[], player: SimPlayer, rng: SimRng) => {
   const action = player.action
   if (!action) {
     stepPlayer(player)
@@ -529,6 +876,18 @@ const playerTurn = (world: SimWorld, events: AddressedEvent[], player: SimPlayer
       return
     case 'chop':
       resolveChop(world, events, player, action, rng)
+      return
+    case 'fish':
+      resolveFish(events, player, action, rng)
+      return
+    case 'cook':
+      resolveCook(world, events, player, action, rng)
+      return
+    case 'openBank':
+      resolveOpenBank(events, player, action)
+      return
+    case 'openShop':
+      resolveOpenShop(world, events, player, action)
       return
   }
 }
@@ -585,6 +944,7 @@ export const runTick = (
   Object.values(world.npcs).forEach((npc) => npcTurn(world, events, npc, rng))
   Object.values(world.players).forEach((player) => playerTurn(world, events, player, rng))
   processRespawns(world)
+  regenerateShopStock(world)
   expireOverheads(world)
   return { world, events }
 }

@@ -1,6 +1,14 @@
 import { xpForLevel } from './xp'
 
-export const SKILLS = ['attack', 'strength', 'defence', 'hitpoints', 'woodcutting'] as const
+export const SKILLS = [
+  'attack',
+  'strength',
+  'defence',
+  'hitpoints',
+  'woodcutting',
+  'fishing',
+  'cooking',
+] as const
 
 export type Skill = (typeof SKILLS)[number]
 
@@ -12,4 +20,6 @@ export const initialSkillXp = (): SkillXp => ({
   defence: 0,
   hitpoints: xpForLevel(10),
   woodcutting: 0,
+  fishing: 0,
+  cooking: 0,
 })

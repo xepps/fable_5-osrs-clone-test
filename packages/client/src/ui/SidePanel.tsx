@@ -23,6 +23,8 @@ const SKILL_LABELS: Record<(typeof SKILLS)[number], string> = {
   defence: 'Defence',
   hitpoints: 'Hitpoints',
   woodcutting: 'Woodcutting',
+  fishing: 'Fishing',
+  cooking: 'Cooking',
 }
 
 const ItemIcon = ({ stack }: { stack: ItemStack }) => (

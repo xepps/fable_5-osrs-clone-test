@@ -1,4 +1,11 @@
-import { ITEMS, NPCS, type ClientMessage, type ItemId, type ItemStack } from '@osrs/shared'
+import {
+  ITEMS,
+  NPCS,
+  type ClientMessage,
+  type ItemId,
+  type ItemStack,
+  type NpcDefId,
+} from '@osrs/shared'
 
 export type GameAction =
   | Readonly<{ type: 'send'; message: ClientMessage }>
@@ -12,16 +19,25 @@ export type MenuOption = Readonly<{
   action: GameAction
 }>
 
+export type InteractableKind = 'fishing_spot' | 'range' | 'campfire' | 'bank_booth'
+
 export type PickTarget =
   | Readonly<{ kind: 'groundItem'; x: number; z: number; itemId: ItemId }>
   | Readonly<{
       kind: 'npc'
       id: string
-      defId: 'guide' | 'goblin'
+      defId: NpcDefId
       name: string
       attackable: boolean
     }>
   | Readonly<{ kind: 'tree'; objectId: string; name: string; examine: string }>
+  | Readonly<{
+      kind: 'object'
+      objectId: string
+      objectKind: InteractableKind
+      name: string
+      examine: string
+    }>
   | Readonly<{ kind: 'player'; id: string; name: string }>
 
 const targetOptions = (target: PickTarget): MenuOption[] => {
@@ -39,22 +55,35 @@ const targetOptions = (target: PickTarget): MenuOption[] => {
         },
       ]
     }
-    case 'npc':
-      return target.attackable
-        ? [
-            {
-              label: 'Attack',
-              targetName: target.name,
-              action: { type: 'send', message: { type: 'attackNpc', npcId: target.id } },
-            },
-          ]
-        : [
-            {
-              label: 'Talk-to',
-              targetName: target.name,
-              action: { type: 'send', message: { type: 'talkToNpc', npcId: target.id } },
-            },
-          ]
+    case 'npc': {
+      if (target.attackable) {
+        return [
+          {
+            label: 'Attack',
+            targetName: target.name,
+            action: { type: 'send', message: { type: 'attackNpc', npcId: target.id } },
+          },
+        ]
+      }
+      const trade: MenuOption[] =
+        NPCS[target.defId].shop === true
+          ? [
+              {
+                label: 'Trade',
+                targetName: target.name,
+                action: { type: 'send', message: { type: 'openShop', npcId: target.id } },
+              },
+            ]
+          : []
+      return [
+        ...trade,
+        {
+          label: 'Talk-to',
+          targetName: target.name,
+          action: { type: 'send', message: { type: 'talkToNpc', npcId: target.id } },
+        },
+      ]
+    }
     case 'tree':
       return [
         {
@@ -63,6 +92,35 @@ const targetOptions = (target: PickTarget): MenuOption[] => {
           action: { type: 'send', message: { type: 'chopTree', objectId: target.objectId } },
         },
       ]
+    case 'object':
+      switch (target.objectKind) {
+        case 'fishing_spot':
+          return [
+            {
+              label: 'Net',
+              targetName: target.name,
+              action: { type: 'send', message: { type: 'fish', objectId: target.objectId } },
+            },
+          ]
+        case 'range':
+        case 'campfire':
+          return [
+            {
+              label: 'Cook',
+              targetName: target.name,
+              action: { type: 'send', message: { type: 'cook', objectId: target.objectId } },
+            },
+          ]
+        case 'bank_booth':
+          return [
+            {
+              label: 'Bank',
+              targetName: target.name,
+              action: { type: 'send', message: { type: 'openBank', objectId: target.objectId } },
+            },
+          ]
+      }
+      return []
     case 'player':
       return []
   }
@@ -85,6 +143,7 @@ const examineOption = (target: PickTarget): MenuOption => {
         action: { type: 'examine', text: NPCS[target.defId].examine },
       }
     case 'tree':
+    case 'object':
       return {
         label: 'Examine',
         targetName: target.name,
@@ -119,6 +178,16 @@ export const menuOptionsFor = (
 
 export const inventoryMenuOptions = (stack: ItemStack, slot: number): MenuOption[] => {
   const def = ITEMS[stack.itemId]
+  const eat: MenuOption[] =
+    def.heals !== undefined
+      ? [
+          {
+            label: 'Eat',
+            targetName: def.name,
+            action: { type: 'send', message: { type: 'eatItem', slot } },
+          },
+        ]
+      : []
   const equip: MenuOption[] = def.equipSlot
     ? [
         {
@@ -129,6 +198,7 @@ export const inventoryMenuOptions = (stack: ItemStack, slot: number): MenuOption
       ]
     : []
   return [
+    ...eat,
     ...equip,
     {
       label: 'Use',

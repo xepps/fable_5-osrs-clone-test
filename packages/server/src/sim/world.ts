@@ -4,6 +4,7 @@ import {
   INVENTORY_SIZE,
   levelForXp,
   NPCS,
+  SHOP_BASE_STOCK,
   type Facing,
   type ItemId,
   type ItemStack,
@@ -17,6 +18,10 @@ export type PlayerAction =
   | Readonly<{ kind: 'talk'; npcId: string }>
   | Readonly<{ kind: 'attack'; npcId: string }>
   | Readonly<{ kind: 'chop'; objectId: string }>
+  | Readonly<{ kind: 'fish'; objectId: string }>
+  | Readonly<{ kind: 'cook'; objectId: string; readyAtTick: number | null }>
+  | Readonly<{ kind: 'openBank'; objectId: string }>
+  | Readonly<{ kind: 'openShop'; npcId: string }>
 
 export type SimPlayer = {
   id: string
@@ -31,6 +36,11 @@ export type SimPlayer = {
   action: PlayerAction | null
   attackCooldown: number
   overhead: { text: string; expiresTick: number } | null
+  runEnabled: boolean
+  runEnergy: number
+  openInterface: 'bank' | 'shop' | null
+  bank: ItemStack[]
+  lastAttackTick: number | null
 }
 
 export type SimNpc = {
@@ -44,6 +54,7 @@ export type SimNpc = {
   respawnAtTick: number | null
   attackCooldown: number
   targetPlayerId: string | null
+  lastAttackTick: number | null
 }
 
 export type SimGroundItem = {
@@ -62,6 +73,7 @@ export type SimWorld = {
   groundItems: SimGroundItem[]
   itemRespawns: Record<number, number>
   depletedTrees: Record<string, number>
+  shopStock: Partial<Record<ItemId, number>>
 }
 
 export const maxHpOf = (player: SimPlayer): number => levelForXp(player.skills.hitpoints)
@@ -81,6 +93,11 @@ export const createPlayer = (id: string, name: string): SimPlayer => {
     action: null,
     attackCooldown: 0,
     overhead: null,
+    runEnabled: false,
+    runEnergy: 100,
+    openInterface: null,
+    bank: [],
+    lastAttackTick: null,
   }
 }
 
@@ -103,6 +120,7 @@ export const createWorld = (): SimWorld => ({
         respawnAtTick: null,
         attackCooldown: 0,
         targetPlayerId: null,
+        lastAttackTick: null,
       } satisfies SimNpc,
     ]),
   ),
@@ -115,4 +133,5 @@ export const createWorld = (): SimWorld => ({
   })),
   itemRespawns: {},
   depletedTrees: {},
+  shopStock: { ...SHOP_BASE_STOCK },
 })

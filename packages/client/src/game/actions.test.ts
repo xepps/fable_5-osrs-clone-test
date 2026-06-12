@@ -57,6 +57,80 @@ describe('right-click menu for things in the world', () => {
     })
   })
 
+  it('offers Net for fishing spots and Cook for ranges and campfires', () => {
+    const spot = menuOptionsFor(
+      [
+        {
+          kind: 'object',
+          objectId: 'fishing_spot_0',
+          objectKind: 'fishing_spot',
+          name: 'Fishing spot',
+          examine: 'Fish are swimming here.',
+        },
+      ],
+      null,
+    )
+    expect(spot[0]).toMatchObject({
+      label: 'Net',
+      action: { type: 'send', message: { type: 'fish', objectId: 'fishing_spot_0' } },
+    })
+    const range = menuOptionsFor(
+      [
+        {
+          kind: 'object',
+          objectId: 'range_0',
+          objectKind: 'range',
+          name: 'Cooking range',
+          examine: 'A hot cooking range.',
+        },
+      ],
+      null,
+    )
+    expect(range[0]).toMatchObject({
+      label: 'Cook',
+      action: { type: 'send', message: { type: 'cook', objectId: 'range_0' } },
+    })
+  })
+
+  it('offers Trade first for the shopkeeper', () => {
+    const options = menuOptionsFor(
+      [
+        {
+          kind: 'npc',
+          id: 'npc_shopkeeper',
+          defId: 'shopkeeper',
+          name: 'Shop keeper',
+          attackable: false,
+        },
+      ],
+      null,
+    )
+    expect(options[0]).toMatchObject({
+      label: 'Trade',
+      action: { type: 'send', message: { type: 'openShop', npcId: 'npc_shopkeeper' } },
+    })
+    expect(options[1]).toMatchObject({ label: 'Talk-to' })
+  })
+
+  it('offers Bank at a bank booth', () => {
+    const options = menuOptionsFor(
+      [
+        {
+          kind: 'object',
+          objectId: 'bank_booth_0',
+          objectKind: 'bank_booth',
+          name: 'Bank booth',
+          examine: 'A sturdy bank booth.',
+        },
+      ],
+      null,
+    )
+    expect(options[0]).toMatchObject({
+      label: 'Bank',
+      action: { type: 'send', message: { type: 'openBank', objectId: 'bank_booth_0' } },
+    })
+  })
+
   it('only offers Walk here and Examine for other players', () => {
     const options = menuOptionsFor([{ kind: 'player', id: 'p2', name: 'Alice' }], { x: 5, z: 5 })
     expect(options.map((option) => option.label)).toEqual(['Walk here', 'Examine', 'Cancel'])
@@ -113,5 +187,13 @@ describe('right-click menu for inventory items', () => {
     const options = inventoryMenuOptions({ itemId: 'logs', quantity: 1 }, 5)
     expect(options.map((option) => option.label)).toEqual(['Use', 'Drop', 'Examine', 'Cancel'])
     expect(options[1]?.action).toEqual({ type: 'send', message: { type: 'dropItem', slot: 5 } })
+  })
+
+  it('offers Eat first for food', () => {
+    const options = inventoryMenuOptions({ itemId: 'shrimps', quantity: 1 }, 2)
+    expect(options[0]).toMatchObject({
+      label: 'Eat',
+      action: { type: 'send', message: { type: 'eatItem', slot: 2 } },
+    })
   })
 })

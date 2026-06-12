@@ -32,6 +32,8 @@ const reconstruct = (parents: Map<number, Position | null>, end: Position): Posi
   return path.reverse().slice(1)
 }
 
+const MAX_VISITED_TILES = 8192
+
 const bfs = (
   start: Position,
   isGoal: (position: Position) => boolean,
@@ -41,7 +43,7 @@ const bfs = (
   const visited: Position[] = [start]
   const queue: Position[] = [start]
   if (isGoal(start)) return { parents, goal: start, visited }
-  for (let head = 0; head < queue.length; head += 1) {
+  for (let head = 0; head < queue.length && visited.length < MAX_VISITED_TILES; head += 1) {
     const current = queue[head]!
     for (const { dx, dz } of NEIGHBOUR_ORDER) {
       const next = { x: current.x + dx, z: current.z + dz }

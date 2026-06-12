@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { ITEM_IDS } from './items'
 import { NPC_DEF_IDS } from './npcs'
-import { SKILLS } from './skills'
+import { SKILLS, type Skill } from './skills'
 import { MAP_SIZE } from './world'
 
 export const INVENTORY_SIZE = 28
@@ -29,6 +29,33 @@ export const clientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('equipItem'), slot: inventorySlot }),
   z.object({ type: z.literal('unequipItem'), equipSlot }),
   z.object({ type: z.literal('dropItem'), slot: inventorySlot }),
+  z.object({ type: z.literal('setRun'), enabled: z.boolean() }),
+  z.object({ type: z.literal('fish'), objectId: z.string() }),
+  z.object({ type: z.literal('cook'), objectId: z.string() }),
+  z.object({ type: z.literal('eatItem'), slot: inventorySlot }),
+  z.object({ type: z.literal('openBank'), objectId: z.string() }),
+  z.object({
+    type: z.literal('depositItem'),
+    slot: inventorySlot,
+    amount: z.union([z.number().int().positive(), z.literal('all')]),
+  }),
+  z.object({
+    type: z.literal('withdrawItem'),
+    bankIndex: z.number().int().min(0),
+    amount: z.union([z.number().int().positive(), z.literal('all')]),
+  }),
+  z.object({ type: z.literal('closeInterface') }),
+  z.object({ type: z.literal('openShop'), npcId: z.string() }),
+  z.object({
+    type: z.literal('buyItem'),
+    itemId,
+    amount: z.number().int().positive(),
+  }),
+  z.object({
+    type: z.literal('sellItem'),
+    slot: inventorySlot,
+    amount: z.union([z.number().int().positive(), z.literal('all')]),
+  }),
   z.object({ type: z.literal('chat'), text: z.string().trim().min(1).max(80) }),
 ])
 
@@ -41,6 +68,8 @@ const facing = z.object({
 
 const itemStack = z.object({ itemId, quantity: z.number().int().positive() })
 
+const entityAnim = z.enum(['attack']).optional()
+
 const playerSnapshot = z.object({
   id: z.string(),
   name: z.string(),
@@ -51,6 +80,7 @@ const playerSnapshot = z.object({
   maxHp: z.number().int().positive(),
   overheadText: z.string().nullable(),
   equipment: z.object({ head: itemId.nullable(), weapon: itemId.nullable() }),
+  anim: entityAnim,
 })
 
 const npcSnapshot = z.object({
@@ -62,6 +92,7 @@ const npcSnapshot = z.object({
   hp: z.number().int().min(0),
   maxHp: z.number().int().positive(),
   dead: z.boolean(),
+  anim: entityAnim,
 })
 
 const groundItem = z.object({
@@ -88,13 +119,17 @@ const privateState = z.object({
   hp: z.number().int().min(0),
   inventory: z.array(itemStack.nullable()).length(INVENTORY_SIZE),
   equipment: z.object({ head: itemStack.nullable(), weapon: itemStack.nullable() }),
-  skills: z.object({
-    attack: z.number().min(0),
-    strength: z.number().min(0),
-    defence: z.number().min(0),
-    hitpoints: z.number().min(0),
-    woodcutting: z.number().min(0),
-  }),
+  skills: z.object(
+    Object.fromEntries(SKILLS.map((skill) => [skill, z.number().min(0)])) as Record<
+      Skill,
+      z.ZodNumber
+    >,
+  ),
+  runEnergy: z.number().int().min(0).max(100),
+  runEnabled: z.boolean(),
+  openInterface: z.enum(['bank', 'shop']).nullable(),
+  bank: z.array(itemStack).nullable(),
+  shop: z.array(z.object({ itemId, quantity: z.number().int().min(0) })).nullable(),
 })
 
 export const serverMessageSchema = z.discriminatedUnion('type', [

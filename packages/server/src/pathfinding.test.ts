@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { GAME_MAP, isWalkable, type Position } from '@osrs/shared'
+import { CENTER, GAME_MAP, isWalkable, MAP_SIZE, type Position } from '@osrs/shared'
 import { findPath, findPathToAdjacent } from './pathfinding'
 
 const openGrid = () => true
@@ -44,12 +44,25 @@ describe('finding a path to a tile', () => {
   })
 
   it('stops at the nearest reachable tile when the target is unreachable', () => {
-    const pondCentre = { x: 48, z: 14 }
+    const pondCentre = { x: CENTER + 48, z: CENTER + 14 }
     const path = findPath(GAME_MAP.spawnPoint, pondCentre, isWalkable)
     const end = path[path.length - 1]
     expect(end).toBeDefined()
     expect(isWalkable(end!)).toBe(true)
     expect(Math.hypot(end!.x - pondCentre.x, end!.z - pondCentre.z)).toBeLessThan(8)
+  })
+
+  it('gives up after a bounded search instead of flooding the whole map', () => {
+    const visited: Position[] = []
+    const countingGrid = (position: Position) => {
+      visited.push(position)
+      return true
+    }
+    const path = findPath({ x: 0, z: 0 }, { x: MAP_SIZE - 1, z: MAP_SIZE - 1 }, countingGrid)
+    expect(visited.length).toBeLessThan(80_000)
+    const end = path[path.length - 1]
+    expect(end).toBeDefined()
+    expect(end!.x + end!.z).toBeGreaterThan(40)
   })
 })
 
